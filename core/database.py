@@ -25,6 +25,14 @@ def _column_exists(cursor, table_name, column_name):
     return any(row[1] == column_name for row in cursor.fetchall())
 
 
+def _reset_autoincrement(cursor, table_names):
+    if not _table_exists(cursor, "sqlite_sequence"):
+        return
+
+    for table_name in table_names:
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table_name,))
+
+
 def _get_or_create_legacy_extraction(cursor):
     cursor.execute(
         """
@@ -320,3 +328,112 @@ def update_question_revision(q_id, revised):
     )
     conn.commit()
     conn.close()
+
+
+def delete_batch(extraction_id):
+    conn = _connect()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM extractions WHERE id = ?",
+        (extraction_id,)
+    )
+    batch_exists = cursor.fetchone()[0]
+    if not batch_exists:
+        conn.close()
+        return {
+            "batch_deleted": 0,
+            "questions_deleted": 0,
+            "extraction_id": extraction_id,
+        }
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM questions WHERE extraction_id = ?",
+        (extraction_id,)
+    )
+    questions_deleted = cursor.fetchone()[0]
+
+    cursor.execute(
+        "DELETE FROM extractions WHERE id = ?",
+        (extraction_id,)
+    )
+    deleted_batches = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+    return {
+        "batch_deleted": deleted_batches,
+        "questions_deleted": questions_deleted,
+        "extraction_id": extraction_id,
+    }
+
+
+def clear_questions_only():
+    conn = _connect()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM questions")
+    questions_deleted = cursor.fetchone()[0]
+    cursor.execute("DELETE FROM questions")
+    _reset_autoincrement(cursor, ["questions"])
+
+    conn.commit()
+    conn.close()
+    return {
+        "questions_deleted": questions_deleted,
+    }
+
+
+def clear_all_data():
+    conn = _connect()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM questions")
+    questions_deleted = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM extractions")
+    batches_deleted = cursor.fetchone()[0]
+
+    cursor.execute("DELETE FROM questions")
+    cursor.execute("DELETE FROM extractions")
+    _reset_autoincrement(cursor, ["questions", "extractions"])
+
+    conn.commit()
+    conn.close()
+    return {
+        "questions_deleted": questions_deleted,
+        "batches_deleted": batches_deleted,
+    }
+
+
+def get_database_stats():
+    conn = _connect()
+    cursor = conn.cursor()
+
+    if not _table_exists(cursor, "extractions") or not _table_exists(cursor, "questions"):
+        conn.close()
+        return {
+            "total_batches": 0,
+            "total_questions": 0,
+            "total_revised": 0,
+            "total_unrevised": 0,
+        }
+
+    cursor.execute("SELECT COUNT(*) FROM extractions")
+    total_batches = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM questions")
+    total_questions = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM questions WHERE COALESCE(revised, 0) = 1")
+    total_revised = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM questions WHERE COALESCE(revised, 0) = 0")
+    total_unrevised = cursor.fetchone()[0]
+
+    conn.close()
+    return {
+        "total_batches": total_batches,
+        "total_questions": total_questions,
+        "total_revised": total_revised,
+        "total_unrevised": total_unrevised,
+    }

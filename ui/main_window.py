@@ -1,6 +1,8 @@
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QProgressBar, QLabel
+from core.database import get_all_questions
 from ui.tabs.import_tab import ImportTab
 from ui.tabs.edit_tab import EditTab
+from ui.tabs.manage_db_tab import ManageDBTab
 
 
 class MainWindow(QMainWindow):
@@ -19,13 +21,17 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.import_tab = ImportTab(self)
         self.edit_tab = EditTab(self)
+        self.manage_db_tab = ManageDBTab(self)
 
         self.tabs.addTab(self.import_tab, "Pipeline Engine (Import/Table)")
         self.tabs.addTab(self.edit_tab, "Revision Workbench (Edit Form)")
+        self.tabs.addTab(self.manage_db_tab, "DB Admin Console")
         master_layout.addWidget(self.tabs)
 
         # Cross-Tab Signals routing linkage map setup boundary parameters
         self.import_tab.question_selected_for_edit.connect(self.route_to_editor)
+        self.manage_db_tab.database_mutated.connect(self.handle_database_mutation)
+        self.manage_db_tab.batch_open_requested.connect(self.route_to_batch_editor)
 
         # System Pipeline Processing Progress Control Bars Footer
         self.lbl_progress = QLabel("System Status: Operational / Monitoring Local DB File System Storage")
@@ -39,3 +45,16 @@ class MainWindow(QMainWindow):
     def route_to_editor(self, question_data_dict):
         self.edit_tab.load_question_details(question_data_dict)
         self.tabs.setCurrentIndex(1)
+
+    def route_to_batch_editor(self, batch_id):
+        questions = get_all_questions(extraction_id=batch_id)
+        if questions:
+            self.edit_tab.load_question_details(questions[0])
+        else:
+            self.edit_tab.refresh_data_views(select_batch_id=batch_id)
+        self.tabs.setCurrentIndex(1)
+
+    def handle_database_mutation(self):
+        self.import_tab.load_table_data()
+        self.edit_tab.refresh_data_views()
+        self.manage_db_tab.refresh_dashboard()

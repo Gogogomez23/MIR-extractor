@@ -6,6 +6,7 @@ An enterprise-grade Python application built using the PyQt6 desktop ecosystem f
 ## Key Core Architectures
 * **Multithreaded Background Operations:** Parsing calculations are handled on a secondary worker thread (`QThread`) to ensure the graphical interface never enters a frozen state.
 * **Relational Local Storage Database:** Persistent storage is powered by a local SQLite engine with parent `extractions` batches, foreign-key linked questions, duplicate detection across prior batches, and a per-question revision flag.
+* **Database Admin Console:** A dedicated tab manages extraction batches, batch exports, safe purges, destructive resets, and live database metrics from the same SQLite file.
 * **Regex Lookahead Boundary State Engine:** Automatically separates questions even when text layouts split awkwardly across columns or page boundaries.
 * **Revision Workbench Navigation:** The edit tab now supports batch filtering, saved-order previous/next navigation, a DB-backed quick selector, a revision toggle, and a dedicated question-number textbox without changing the exported document structure.
 

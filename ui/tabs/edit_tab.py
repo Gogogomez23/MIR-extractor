@@ -129,7 +129,8 @@ class EditTab(QWidget):
         target_batch_id = self.current_batch_id if select_batch_id is None else select_batch_id
         target_question_id = self.current_q_id if select_q_id is None else select_q_id
         self.refresh_batch_selector(select_batch_id=target_batch_id)
-        self.refresh_question_list(select_q_id=target_question_id, extraction_id=target_batch_id)
+        resolved_batch_id = self.current_batch_id
+        self.refresh_question_list(select_q_id=target_question_id, extraction_id=resolved_batch_id)
 
     def refresh_batch_selector(self, select_batch_id=None):
         batches = get_extractions()
