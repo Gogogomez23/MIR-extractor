@@ -1,6 +1,8 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                             QLineEdit, QTextEdit, QComboBox, QPushButton, QMessageBox)
-from core.database import update_question
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QTextEdit,
+    QComboBox, QPushButton, QMessageBox
+)
+from core.database import get_all_questions, update_question
 
 
 class EditTab(QWidget):
@@ -8,23 +10,48 @@ class EditTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.current_q_id = None
+        self.current_question_data = None
+        self.question_order = []
+        self.question_index_by_id = {}
         self.init_ui()
+        self.refresh_question_list()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
 
-        # Active Reference State Label header info tracking indicators
-        self.lbl_active_ref = QLabel("Select a question from the grid to modify parameters...")
+        self.lbl_active_ref = QLabel(
+            "Select a question from the grid or dropdown to modify parameters..."
+        )
         self.lbl_active_ref.setStyleSheet("font-weight: bold; color: #3b82f6; font-size: 13px;")
         layout.addWidget(self.lbl_active_ref)
 
-        # Enunciado Field Box
+        nav_row = QHBoxLayout()
+
+        self.btn_prev_question = QPushButton("Previous Question")
+        self.btn_prev_question.clicked.connect(lambda: self.go_to_adjacent_question(-1))
+        nav_row.addWidget(self.btn_prev_question)
+
+        self.btn_next_question = QPushButton("Next Question")
+        self.btn_next_question.clicked.connect(lambda: self.go_to_adjacent_question(1))
+        nav_row.addWidget(self.btn_next_question)
+
+        nav_row.addWidget(QLabel("Jump to DB Question:"))
+        self.combo_question_selector = QComboBox()
+        self.combo_question_selector.currentIndexChanged.connect(self.handle_question_selection_from_dropdown)
+        nav_row.addWidget(self.combo_question_selector, 1)
+        layout.addLayout(nav_row)
+
+        layout.addWidget(QLabel("Question Number:"))
+        self.entry_question_num = QLineEdit()
+        self.entry_question_num.setPlaceholderText("Question number")
+        self.entry_question_num.setMaximumWidth(120)
+        layout.addWidget(self.entry_question_num)
+
         layout.addWidget(QLabel("Enunciado:"))
         self.txt_enunciado = QTextEdit()
         self.txt_enunciado.setMaximumHeight(100)
         layout.addWidget(self.txt_enunciado)
 
-        # Options input cluster grid structure matrix arrays
         self.opt_inputs = []
         for idx in range(1, 6):
             opt_lay = QHBoxLayout()
@@ -34,7 +61,6 @@ class EditTab(QWidget):
             self.opt_inputs.append(ledit)
             layout.addLayout(opt_lay)
 
-        # Metadata adjustment block rows
         meta_row = QHBoxLayout()
         meta_row.addWidget(QLabel("RC Index Number:"))
         self.entry_rc = QLineEdit()
@@ -49,12 +75,10 @@ class EditTab(QWidget):
         meta_row.addStretch()
         layout.addLayout(meta_row)
 
-        # Commentary Analysis box
         layout.addWidget(QLabel("Explicación:"))
         self.txt_explicacion = QTextEdit()
         layout.addWidget(self.txt_explicacion)
 
-        # Action Execution Buttons control clusters
         btn_layout = QHBoxLayout()
         self.btn_ai_mock = QPushButton("✨ Summarize Explanation with AI")
         self.btn_ai_mock.clicked.connect(self.trigger_ai_mockup)
@@ -70,59 +94,185 @@ class EditTab(QWidget):
 
     def toggle_form_state(self, enabled=True):
         self.txt_enunciado.setEnabled(enabled)
+        self.entry_question_num.setEnabled(enabled)
         self.entry_rc.setEnabled(enabled)
         self.combo_diff.setEnabled(enabled)
         self.txt_explicacion.setEnabled(enabled)
         self.btn_ai_mock.setEnabled(enabled)
         self.btn_save_changes.setEnabled(enabled)
+        self.btn_prev_question.setEnabled(enabled and self.has_previous_question())
+        self.btn_next_question.setEnabled(enabled and self.has_next_question())
         for ledit in self.opt_inputs:
             ledit.setEnabled(enabled)
 
-    def load_question_details(self, question_dict):
-        self.current_q_id = question_dict["id"]
-        self.toggle_form_state(True)
+    def clear_form_fields(self):
+        self.entry_question_num.clear()
+        self.txt_enunciado.clear()
+        for ledit in self.opt_inputs:
+            ledit.clear()
+        self.entry_rc.clear()
+        self.combo_diff.setCurrentIndex(1)
+        self.txt_explicacion.clear()
 
+    def update_active_ref_label(self):
+        if not self.current_question_data:
+            self.lbl_active_ref.setText(
+                "Select a question from the grid or dropdown to modify parameters..."
+            )
+            return
+
+        year = self.current_question_data.get("ano", "----")
+        question_num = self.entry_question_num.text().strip() or self.current_question_data.get("num", "")
         self.lbl_active_ref.setText(
-            f"Modifying Active Object: MIR {question_dict['ano']} - Question {question_dict['num']}")
+            f"Modifying Active Object: MIR {year} - Question {question_num}"
+        )
+
+    def refresh_question_list(self, select_q_id=None):
+        self.question_order = get_all_questions()
+        self.question_index_by_id = {}
+
+        self.combo_question_selector.blockSignals(True)
+        try:
+            self.combo_question_selector.clear()
+            self.combo_question_selector.setPlaceholderText("Select a question from the database...")
+
+            if not self.question_order:
+                self.combo_question_selector.setEnabled(False)
+                self.combo_question_selector.setCurrentIndex(-1)
+                self.current_q_id = None
+                self.current_question_data = None
+                self.clear_form_fields()
+                self.update_active_ref_label()
+                self.toggle_form_state(False)
+                return
+
+            for idx, question in enumerate(self.question_order):
+                label = f"MIR {question['ano']} - Q{question['num']} [{question['status']}]"
+                self.combo_question_selector.addItem(label, question["id"])
+                self.question_index_by_id[question["id"]] = idx
+
+            self.combo_question_selector.setEnabled(True)
+            target_id = select_q_id if select_q_id is not None else self.current_q_id
+            if target_id in self.question_index_by_id:
+                self.combo_question_selector.setCurrentIndex(self.question_index_by_id[target_id])
+            else:
+                self.combo_question_selector.setCurrentIndex(-1)
+        finally:
+            self.combo_question_selector.blockSignals(False)
+
+        self.update_navigation_buttons()
+
+    def update_navigation_buttons(self):
+        if not self.current_q_id or self.current_q_id not in self.question_index_by_id:
+            self.btn_prev_question.setEnabled(False)
+            self.btn_next_question.setEnabled(False)
+            return
+
+        current_index = self.question_index_by_id[self.current_q_id]
+        self.btn_prev_question.setEnabled(current_index > 0)
+        self.btn_next_question.setEnabled(current_index < len(self.question_order) - 1)
+
+    def has_previous_question(self):
+        if not self.current_q_id or self.current_q_id not in self.question_index_by_id:
+            return False
+        return self.question_index_by_id[self.current_q_id] > 0
+
+    def has_next_question(self):
+        if not self.current_q_id or self.current_q_id not in self.question_index_by_id:
+            return False
+        return self.question_index_by_id[self.current_q_id] < len(self.question_order) - 1
+
+    def load_question_details(self, question_dict):
+        self.refresh_question_list(select_q_id=question_dict["id"])
+        self.current_q_id = question_dict["id"]
+        self.current_question_data = dict(question_dict)
+
+        self.toggle_form_state(True)
+        self.entry_question_num.setText(question_dict["num"])
+
+        self.update_active_ref_label()
         self.txt_enunciado.setPlainText(question_dict["enunciado"])
         self.entry_rc.setText(question_dict["rc"])
 
-        # Safe string dropdown matching loop boundary parameters
         index = self.combo_diff.findText(question_dict["dificultad"])
         if index >= 0:
             self.combo_diff.setCurrentIndex(index)
 
         self.txt_explicacion.setPlainText(question_dict["explicacion"])
 
-        # Populate arrays cleanly tracking string positions length boundaries
         for i, ledit in enumerate(self.opt_inputs):
             if i < len(question_dict["opciones"]):
                 ledit.setText(question_dict["opciones"][i])
             else:
                 ledit.clear()
 
-    def trigger_ai_mockup(self):
-        # AI Summarization mockup tracking logic sequence layer parameters
-        current_text = self.txt_explicacion.toPlainText().strip()
-        if not current_text:
-            QMessageBox.warning(self, "AI Notice",
-                                "No text found inside explanation field to execute summary transformation on.")
+        self.update_navigation_buttons()
+
+    def handle_question_selection_from_dropdown(self, index):
+        if index < 0:
             return
 
-        mocked_summary = f"[AI Summary Applied]: The text was parsed through Gemini 1.5 Flash. Primary points are: {current_text[:120]}..."
+        selected_q_id = self.combo_question_selector.itemData(index)
+        if selected_q_id is None:
+            return
+
+        target_q = next((q for q in self.question_order if q["id"] == selected_q_id), None)
+        if target_q:
+            self.load_question_details(target_q)
+
+    def go_to_adjacent_question(self, step):
+        if not self.current_q_id or self.current_q_id not in self.question_index_by_id:
+            return
+
+        current_index = self.question_index_by_id[self.current_q_id]
+        target_index = current_index + step
+        if target_index < 0 or target_index >= len(self.question_order):
+            QMessageBox.information(
+                self,
+                "Navigation Notice",
+                "You are already at the edge of the saved question order."
+            )
+            return
+
+        self.load_question_details(self.question_order[target_index])
+
+    def trigger_ai_mockup(self):
+        current_text = self.txt_explicacion.toPlainText().strip()
+        if not current_text:
+            QMessageBox.warning(
+                self,
+                "AI Notice",
+                "No text found inside explanation field to execute summary transformation on."
+            )
+            return
+
+        mocked_summary = (
+            f"[AI Summary Applied]: The text was parsed through Gemini 1.5 Flash. "
+            f"Primary points are: {current_text[:120]}..."
+        )
         self.txt_explicacion.setPlainText(mocked_summary)
-        QMessageBox.information(self, "API Mock Response",
-                                "Gemini AI Agent simulated pipeline ran successfully. Summary values assigned.")
+        QMessageBox.information(
+            self,
+            "API Mock Response",
+            "Gemini AI Agent simulated pipeline ran successfully. Summary values assigned."
+        )
 
     def commit_form_updates(self):
         if not self.current_q_id:
             return
 
         opts = [ledit.text().strip() for ledit in self.opt_inputs if ledit.text().strip() != ""]
-
-        # Re-evaluate validation status tags cleanly dynamically on saving tracking updates
         rc_val = self.entry_rc.text().strip()
         exp_val = self.txt_explicacion.toPlainText().strip()
+        question_num = self.entry_question_num.text().strip()
+
+        if not question_num:
+            QMessageBox.warning(
+                self,
+                "Validation Notice",
+                "Question number cannot be empty."
+            )
+            return
 
         status = "🟢 OK"
         msg = "Correctly parsed."
@@ -134,6 +284,7 @@ class EditTab(QWidget):
             msg = "Options structure is corrupted."
 
         updated_payload = {
+            "num": question_num,
             "enunciado": self.txt_enunciado.toPlainText().strip(),
             "opciones": opts,
             "rc": rc_val,
@@ -147,11 +298,18 @@ class EditTab(QWidget):
 
         try:
             update_question(self.current_q_id, updated_payload)
-            QMessageBox.information(self, "Success",
-                                    "Question record modifications committed successfully to local SQLite file store.")
+            QMessageBox.information(
+                self,
+                "Success",
+                "Question record modifications committed successfully to local SQLite file store."
+            )
 
-            # Refresh presentation tables back on initial navigation panel
-            self.main_window.tabs.setCurrentIndex(0)
+            self.refresh_question_list(select_q_id=self.current_q_id)
+            self.update_active_ref_label()
             self.main_window.import_tab.load_table_data()
         except Exception as e:
-            QMessageBox.critical(self, "Write Error", f"Could not update question record database entry: {str(e)}")
+            QMessageBox.critical(
+                self,
+                "Write Error",
+                f"Could not update question record database entry: {str(e)}"
+            )

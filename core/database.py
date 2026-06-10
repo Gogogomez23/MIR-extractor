@@ -81,12 +81,12 @@ def update_question(q_id, data):
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE questions SET 
-            enunciado = ?, opciones_json = ?, rc = ?, 
+            num = ?, enunciado = ?, opciones_json = ?, rc = ?, 
             tema = ?, especialidad = ?, dificultad = ?, 
             explicacion = ?, status = ?, status_msg = ?
         WHERE id = ?
     """, (
-        data["enunciado"], json.dumps(data["opciones"]), data["rc"],
+        data.get("num", ""), data["enunciado"], json.dumps(data["opciones"]), data["rc"],
         data["tema"], data["especialidad"], data["dificultad"],
         data["explicacion"], data["status"], data["status_msg"], q_id
     ))
