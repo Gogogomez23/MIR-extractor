@@ -1,7 +1,9 @@
+import os
+
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFileDialog, QMessageBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QComboBox)
-from PyQt6.QtCore import pyqtSignal
 from ui.workers import PDFParseWorker
 from core.database import save_questions, get_all_questions
 import pdfplumber
@@ -18,6 +20,8 @@ class ImportTab(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+        self.current_start_page = 0
+        self.current_end_page = 0
 
         # File Select Area
         file_layout = QHBoxLayout()
@@ -102,15 +106,18 @@ class ImportTab(QWidget):
                 f"You requested page {end_p}, but the PDF only has {total_doc_pages} pages.\n"
                 "The application will process up to the absolute last page of the document. Proceed?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
+                )
             if reply == QMessageBox.StandardButton.No:
                 return
 
+        actual_end_page = min(end_p, total_doc_pages)
+        self.current_start_page = start_p
+        self.current_end_page = actual_end_page
         self.main_window.progress_bar.setValue(0)
         self.btn_extract.setEnabled(False)
 
         # Thread instantiation execution
-        self.worker = PDFParseWorker(self.pdf_path, start_p, end_p)
+        self.worker = PDFParseWorker(self.pdf_path, start_p, actual_end_page)
         self.worker.progress_updated.connect(self.main_window.progress_bar.setValue)
         self.worker.parsing_complete.connect(self.handle_parse_success)
         self.worker.parsing_error.connect(self.handle_parse_failure)
@@ -121,10 +128,16 @@ class ImportTab(QWidget):
         self.main_window.progress_bar.setValue(100)
 
         if items:
-            save_questions(items)
+            save_questions(
+                items,
+                filename=os.path.basename(self.pdf_path),
+                page_range=f"{self.current_start_page}-{self.current_end_page}"
+            )
             QMessageBox.information(self, "Success",
                                     f"Successfully extracted and saved {len(items)} questions to Database!")
             self.load_table_data()
+            if hasattr(self.main_window, "edit_tab"):
+                self.main_window.edit_tab.refresh_data_views()
         else:
             QMessageBox.warning(self, "Extraction Notice",
                                 "No structural layout items matches found in target page range bounds.")
@@ -137,34 +150,50 @@ class ImportTab(QWidget):
         sort_by_year = (self.combo_sort.currentIndex() == 1)
         questions = get_all_questions(sort_by_year=sort_by_year)
 
-        self.table.setRowCount(0)
-        if not questions:
-            self.btn_export.setEnabled(False)
-            return
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
+        try:
+            self.table.clearContents()
+            self.table.setRowCount(0)
+            if not questions:
+                self.btn_export.setEnabled(False)
+                return
 
-        self.btn_export.setEnabled(True)
-        for idx, q in enumerate(questions):
-            self.table.insertRow(idx)
+            self.btn_export.setEnabled(True)
+            for idx, q in enumerate(questions):
+                self.table.insertRow(idx)
 
-            status_item = QTableWidgetItem(q["status"])
-            ref_item = QTableWidgetItem(f"MIR {q['ano']} - Q{q['num']}")
-            meta_item = QTableWidgetItem(f"T: {q['tema'][:15]}...\nS: {q['especialidad'][:15]}")
-            stem_item = QTableWidgetItem(q["enunciado"][:50] + "...")
-            opts_item = QTableWidgetItem(f"{len(q['opciones'])} Options")
-            rc_item = QTableWidgetItem(f"RC: {q['rc']}")
+                status_item = QTableWidgetItem(q["status"] or "Unknown")
+                ref_item = QTableWidgetItem(f"MIR {q['ano']} - Q{q['num']}")
+                meta_item = QTableWidgetItem(
+                    f"T: {(q['tema'] or '')[:15]}...\nS: {(q['especialidad'] or '')[:15]}"
+                )
+                stem_preview = q["enunciado"] or ""
+                if len(stem_preview) > 50:
+                    stem_preview = stem_preview[:50] + "..."
+                stem_item = QTableWidgetItem(stem_preview)
+                opts_item = QTableWidgetItem(f"{len(q['opciones'])} Options")
+                rc_item = QTableWidgetItem(f"RC: {q['rc']}")
 
-            # Save the database index primary key directly inside row item memory metadata
-            status_item.setData(32, q["id"])
+                # Save the database index primary key directly inside row item memory metadata
+                status_item.setData(Qt.ItemDataRole.UserRole, q["id"])
 
-            self.table.setItem(idx, 0, status_item)
-            self.table.setItem(idx, 1, ref_item)
-            self.table.setItem(idx, 2, meta_item)
-            self.table.setItem(idx, 3, stem_item)
-            self.table.setItem(idx, 4, opts_item)
-            self.table.setItem(idx, 5, rc_item)
+                self.table.setItem(idx, 0, status_item)
+                self.table.setItem(idx, 1, ref_item)
+                self.table.setItem(idx, 2, meta_item)
+                self.table.setItem(idx, 3, stem_item)
+                self.table.setItem(idx, 4, opts_item)
+                self.table.setItem(idx, 5, rc_item)
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
 
     def handle_row_double_click(self, row, column):
-        q_id = self.table.item(row, 0).data(32)
+        status_item = self.table.item(row, 0)
+        if status_item is None:
+            return
+
+        q_id = status_item.data(Qt.ItemDataRole.UserRole)
         questions = get_all_questions()
         target_q = next((q for q in questions if q["id"] == q_id), None)
         if target_q:
@@ -194,6 +223,3 @@ class ImportTab(QWidget):
             QMessageBox.information(self, "Success", f"Document generated at:\n{save_path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed saving output file down: {str(e)}")
-
-
-import os

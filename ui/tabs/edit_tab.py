@@ -1,8 +1,15 @@
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QTextEdit,
-    QComboBox, QPushButton, QMessageBox
+    QComboBox, QPushButton, QMessageBox, QCheckBox
 )
-from core.database import get_all_questions, update_question
+
+from core.database import (
+    get_all_questions,
+    get_extractions,
+    update_question,
+    update_question_revision,
+)
 
 
 class EditTab(QWidget):
@@ -11,19 +18,39 @@ class EditTab(QWidget):
         self.main_window = main_window
         self.current_q_id = None
         self.current_question_data = None
+        self.current_batch_id = None
         self.question_order = []
         self.question_index_by_id = {}
+        self.batch_index_by_id = {}
         self.init_ui()
-        self.refresh_question_list()
+        self.refresh_data_views()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+
+        batch_row = QHBoxLayout()
+        batch_row.addWidget(QLabel("Batch Selector:"))
+        self.combo_batch_selector = QComboBox()
+        self.combo_batch_selector.currentIndexChanged.connect(self.handle_batch_selection_from_dropdown)
+        batch_row.addWidget(self.combo_batch_selector, 1)
+        layout.addLayout(batch_row)
 
         self.lbl_active_ref = QLabel(
             "Select a question from the grid or dropdown to modify parameters..."
         )
         self.lbl_active_ref.setStyleSheet("font-weight: bold; color: #3b82f6; font-size: 13px;")
         layout.addWidget(self.lbl_active_ref)
+
+        revision_row = QHBoxLayout()
+        self.lbl_revision_status = QLabel("Revision Status: No question selected")
+        self.lbl_revision_status.setStyleSheet("font-weight: bold; color: #6b7280;")
+        revision_row.addWidget(self.lbl_revision_status)
+        revision_row.addStretch()
+
+        self.chk_mark_revised = QCheckBox("Mark as Revised")
+        self.chk_mark_revised.stateChanged.connect(self.handle_revision_toggle)
+        revision_row.addWidget(self.chk_mark_revised)
+        layout.addLayout(revision_row)
 
         nav_row = QHBoxLayout()
 
@@ -92,6 +119,89 @@ class EditTab(QWidget):
 
         self.toggle_form_state(False)
 
+    def format_batch_label(self, batch):
+        filename = batch.get("filename") or "Unnamed batch"
+        page_range = batch.get("page_range") or "-"
+        timestamp = batch.get("timestamp") or ""
+        return f"Batch #{batch['id']} | {filename} | Pages {page_range} | {timestamp}"
+
+    def refresh_data_views(self, select_batch_id=None, select_q_id=None):
+        target_batch_id = self.current_batch_id if select_batch_id is None else select_batch_id
+        target_question_id = self.current_q_id if select_q_id is None else select_q_id
+        self.refresh_batch_selector(select_batch_id=target_batch_id)
+        self.refresh_question_list(select_q_id=target_question_id, extraction_id=target_batch_id)
+
+    def refresh_batch_selector(self, select_batch_id=None):
+        batches = get_extractions()
+        self.batch_index_by_id = {None: 0}
+
+        self.combo_batch_selector.blockSignals(True)
+        try:
+            self.combo_batch_selector.clear()
+            self.combo_batch_selector.addItem("All Batches", None)
+
+            for idx, batch in enumerate(batches, start=1):
+                self.combo_batch_selector.addItem(self.format_batch_label(batch), batch["id"])
+                self.batch_index_by_id[batch["id"]] = idx
+
+            target_batch_id = self.current_batch_id if select_batch_id is None else select_batch_id
+            if target_batch_id in self.batch_index_by_id:
+                self.combo_batch_selector.setCurrentIndex(self.batch_index_by_id[target_batch_id])
+                self.current_batch_id = target_batch_id
+            else:
+                self.combo_batch_selector.setCurrentIndex(0)
+                self.current_batch_id = None
+        finally:
+            self.combo_batch_selector.blockSignals(False)
+
+    def refresh_question_list(self, select_q_id=None, extraction_id=None):
+        self.current_batch_id = extraction_id if extraction_id is not None else self.current_batch_id
+        self.question_order = get_all_questions(extraction_id=self.current_batch_id)
+        self.question_index_by_id = {}
+
+        self.combo_question_selector.blockSignals(True)
+        try:
+            self.combo_question_selector.clear()
+            self.combo_question_selector.setPlaceholderText("Select a question from the database...")
+
+            if not self.question_order:
+                self.combo_question_selector.setEnabled(False)
+                self.current_q_id = None
+                self.current_question_data = None
+                self.clear_form_fields()
+                self.toggle_form_state(False)
+                self.update_active_ref_label()
+                self.update_revision_indicator()
+                self.update_navigation_buttons()
+                return
+
+            for idx, question in enumerate(self.question_order):
+                status = question.get("status") or "Unknown"
+                revised_suffix = " [Revised]" if int(question.get("revised", 0)) else ""
+                label = f"MIR {question['ano']} - Q{question['num']} [{status}]{revised_suffix}"
+                self.combo_question_selector.addItem(label, question["id"])
+                self.question_index_by_id[question["id"]] = idx
+
+            self.combo_question_selector.setEnabled(True)
+            target_id = select_q_id if select_q_id is not None else self.current_q_id
+            if target_id in self.question_index_by_id:
+                self.combo_question_selector.setCurrentIndex(self.question_index_by_id[target_id])
+                self.current_q_id = target_id
+                self.toggle_form_state(True)
+            else:
+                self.combo_question_selector.setCurrentIndex(-1)
+                if select_q_id is not None or self.current_q_id not in self.question_index_by_id:
+                    self.current_q_id = None
+                    self.current_question_data = None
+                    self.clear_form_fields()
+                    self.toggle_form_state(False)
+        finally:
+            self.combo_question_selector.blockSignals(False)
+
+        self.update_active_ref_label()
+        self.update_revision_indicator()
+        self.update_navigation_buttons()
+
     def toggle_form_state(self, enabled=True):
         self.txt_enunciado.setEnabled(enabled)
         self.entry_question_num.setEnabled(enabled)
@@ -100,6 +210,7 @@ class EditTab(QWidget):
         self.txt_explicacion.setEnabled(enabled)
         self.btn_ai_mock.setEnabled(enabled)
         self.btn_save_changes.setEnabled(enabled)
+        self.chk_mark_revised.setEnabled(enabled)
         self.btn_prev_question.setEnabled(enabled and self.has_previous_question())
         self.btn_next_question.setEnabled(enabled and self.has_next_question())
         for ledit in self.opt_inputs:
@@ -113,6 +224,9 @@ class EditTab(QWidget):
         self.entry_rc.clear()
         self.combo_diff.setCurrentIndex(1)
         self.txt_explicacion.clear()
+        self.chk_mark_revised.blockSignals(True)
+        self.chk_mark_revised.setChecked(False)
+        self.chk_mark_revised.blockSignals(False)
 
     def update_active_ref_label(self):
         if not self.current_question_data:
@@ -127,40 +241,19 @@ class EditTab(QWidget):
             f"Modifying Active Object: MIR {year} - Question {question_num}"
         )
 
-    def refresh_question_list(self, select_q_id=None):
-        self.question_order = get_all_questions()
-        self.question_index_by_id = {}
+    def update_revision_indicator(self):
+        if not self.current_question_data:
+            self.lbl_revision_status.setText("Revision Status: No question selected")
+            self.lbl_revision_status.setStyleSheet("font-weight: bold; color: #6b7280;")
+            return
 
-        self.combo_question_selector.blockSignals(True)
-        try:
-            self.combo_question_selector.clear()
-            self.combo_question_selector.setPlaceholderText("Select a question from the database...")
-
-            if not self.question_order:
-                self.combo_question_selector.setEnabled(False)
-                self.combo_question_selector.setCurrentIndex(-1)
-                self.current_q_id = None
-                self.current_question_data = None
-                self.clear_form_fields()
-                self.update_active_ref_label()
-                self.toggle_form_state(False)
-                return
-
-            for idx, question in enumerate(self.question_order):
-                label = f"MIR {question['ano']} - Q{question['num']} [{question['status']}]"
-                self.combo_question_selector.addItem(label, question["id"])
-                self.question_index_by_id[question["id"]] = idx
-
-            self.combo_question_selector.setEnabled(True)
-            target_id = select_q_id if select_q_id is not None else self.current_q_id
-            if target_id in self.question_index_by_id:
-                self.combo_question_selector.setCurrentIndex(self.question_index_by_id[target_id])
-            else:
-                self.combo_question_selector.setCurrentIndex(-1)
-        finally:
-            self.combo_question_selector.blockSignals(False)
-
-        self.update_navigation_buttons()
+        revised = int(self.current_question_data.get("revised", 0))
+        if revised:
+            self.lbl_revision_status.setText("Revision Status: Revised")
+            self.lbl_revision_status.setStyleSheet("font-weight: bold; color: #15803d;")
+        else:
+            self.lbl_revision_status.setText("Revision Status: Pending Review")
+            self.lbl_revision_status.setStyleSheet("font-weight: bold; color: #b45309;")
 
     def update_navigation_buttons(self):
         if not self.current_q_id or self.current_q_id not in self.question_index_by_id:
@@ -183,30 +276,43 @@ class EditTab(QWidget):
         return self.question_index_by_id[self.current_q_id] < len(self.question_order) - 1
 
     def load_question_details(self, question_dict):
-        self.refresh_question_list(select_q_id=question_dict["id"])
         self.current_q_id = question_dict["id"]
         self.current_question_data = dict(question_dict)
+        self.current_batch_id = question_dict.get("extraction_id")
+
+        self.refresh_batch_selector(select_batch_id=self.current_batch_id)
+        self.refresh_question_list(select_q_id=self.current_q_id, extraction_id=self.current_batch_id)
 
         self.toggle_form_state(True)
-        self.entry_question_num.setText(question_dict["num"])
+        self.entry_question_num.setText(str(question_dict.get("num", "")))
 
         self.update_active_ref_label()
-        self.txt_enunciado.setPlainText(question_dict["enunciado"])
-        self.entry_rc.setText(question_dict["rc"])
+        self.txt_enunciado.setPlainText(question_dict.get("enunciado", ""))
+        self.entry_rc.setText(str(question_dict.get("rc", "")))
 
-        index = self.combo_diff.findText(question_dict["dificultad"])
+        index = self.combo_diff.findText(question_dict.get("dificultad", ""))
         if index >= 0:
             self.combo_diff.setCurrentIndex(index)
 
-        self.txt_explicacion.setPlainText(question_dict["explicacion"])
+        self.txt_explicacion.setPlainText(question_dict.get("explicacion", ""))
 
         for i, ledit in enumerate(self.opt_inputs):
-            if i < len(question_dict["opciones"]):
+            if i < len(question_dict.get("opciones", [])):
                 ledit.setText(question_dict["opciones"][i])
             else:
                 ledit.clear()
 
+        self.chk_mark_revised.blockSignals(True)
+        self.chk_mark_revised.setChecked(bool(question_dict.get("revised", 0)))
+        self.chk_mark_revised.blockSignals(False)
+
+        self.update_revision_indicator()
         self.update_navigation_buttons()
+
+    def handle_batch_selection_from_dropdown(self, index):
+        batch_id = self.combo_batch_selector.itemData(index)
+        self.current_batch_id = batch_id
+        self.refresh_question_list(select_q_id=self.current_q_id, extraction_id=batch_id)
 
     def handle_question_selection_from_dropdown(self, index):
         if index < 0:
@@ -235,6 +341,30 @@ class EditTab(QWidget):
             return
 
         self.load_question_details(self.question_order[target_index])
+
+    def handle_revision_toggle(self, state):
+        if not self.current_q_id:
+            return
+
+        revised = 1 if state == Qt.CheckState.Checked.value else 0
+        previous_revised = int(self.current_question_data.get("revised", 0)) if self.current_question_data else 0
+
+        try:
+            update_question_revision(self.current_q_id, revised)
+        except Exception as e:
+            self.chk_mark_revised.blockSignals(True)
+            self.chk_mark_revised.setChecked(bool(previous_revised))
+            self.chk_mark_revised.blockSignals(False)
+            QMessageBox.critical(
+                self,
+                "Revision Update Error",
+                f"Could not update revision status: {str(e)}"
+            )
+            return
+
+        if self.current_question_data is not None:
+            self.current_question_data["revised"] = revised
+        self.update_revision_indicator()
 
     def trigger_ai_mockup(self):
         current_text = self.txt_explicacion.toPlainText().strip()
@@ -265,6 +395,7 @@ class EditTab(QWidget):
         rc_val = self.entry_rc.text().strip()
         exp_val = self.txt_explicacion.toPlainText().strip()
         question_num = self.entry_question_num.text().strip()
+        revised = 1 if self.chk_mark_revised.isChecked() else 0
 
         if not question_num:
             QMessageBox.warning(
@@ -293,7 +424,8 @@ class EditTab(QWidget):
             "dificultad": self.combo_diff.currentText(),
             "explicacion": exp_val,
             "status": status,
-            "status_msg": msg
+            "status_msg": msg,
+            "revised": revised,
         }
 
         try:
@@ -304,9 +436,17 @@ class EditTab(QWidget):
                 "Question record modifications committed successfully to local SQLite file store."
             )
 
-            self.refresh_question_list(select_q_id=self.current_q_id)
+            self.current_question_data = {
+                **(self.current_question_data or {}),
+                **updated_payload,
+                "id": self.current_q_id,
+                "extraction_id": self.current_batch_id,
+            }
+            self.refresh_data_views(select_batch_id=self.current_batch_id, select_q_id=self.current_q_id)
             self.update_active_ref_label()
-            self.main_window.import_tab.load_table_data()
+            self.update_revision_indicator()
+            if hasattr(self.main_window, "import_tab"):
+                self.main_window.import_tab.load_table_data()
         except Exception as e:
             QMessageBox.critical(
                 self,
