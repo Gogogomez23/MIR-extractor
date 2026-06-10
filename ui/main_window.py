@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QProg
 from core.database import get_all_questions
 from ui.tabs.import_tab import ImportTab
 from ui.tabs.edit_tab import EditTab
+from ui.tabs.export_wizard_tab import ExportWizardTab
 from ui.tabs.manage_db_tab import ManageDBTab
 
 
@@ -20,10 +21,12 @@ class MainWindow(QMainWindow):
         # Tab Router Navigation System Frame Matrix
         self.tabs = QTabWidget()
         self.import_tab = ImportTab(self)
+        self.export_wizard_tab = ExportWizardTab(self)
         self.edit_tab = EditTab(self)
         self.manage_db_tab = ManageDBTab(self)
 
         self.tabs.addTab(self.import_tab, "Pipeline Engine (Import/Table)")
+        self.tabs.addTab(self.export_wizard_tab, "Export Wizard")
         self.tabs.addTab(self.edit_tab, "Revision Workbench (Edit Form)")
         self.tabs.addTab(self.manage_db_tab, "DB Admin Console")
         master_layout.addWidget(self.tabs)
@@ -44,7 +47,7 @@ class MainWindow(QMainWindow):
 
     def route_to_editor(self, question_data_dict):
         self.edit_tab.load_question_details(question_data_dict)
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentWidget(self.edit_tab)
 
     def route_to_batch_editor(self, batch_id):
         questions = get_all_questions(extraction_id=batch_id)
@@ -52,9 +55,10 @@ class MainWindow(QMainWindow):
             self.edit_tab.load_question_details(questions[0])
         else:
             self.edit_tab.refresh_data_views(select_batch_id=batch_id)
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentWidget(self.edit_tab)
 
     def handle_database_mutation(self):
         self.import_tab.load_table_data()
         self.edit_tab.refresh_data_views()
+        self.export_wizard_tab.refresh_data_sources()
         self.manage_db_tab.refresh_dashboard()

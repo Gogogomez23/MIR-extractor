@@ -3,6 +3,7 @@ import os
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFileDialog,
     QGroupBox,
     QGridLayout,
@@ -18,6 +19,7 @@ from PyQt6.QtWidgets import (
     QInputDialog,
 )
 
+from core.export_format import render_export_document
 from core.database import (
     clear_all_data,
     clear_questions_only,
@@ -27,43 +29,6 @@ from core.database import (
     get_extractions,
     init_db,
 )
-
-
-def _build_batch_export_template(batch, questions):
-    lines = []
-    lines.append("MIR Batch Export")
-    lines.append("=" * 80)
-    lines.append(f"Batch ID: {batch['id']}")
-    lines.append(f"Filename: {batch.get('filename') or ''}")
-    lines.append(f"Page Range: {batch.get('page_range') or ''}")
-    lines.append(f"Timestamp: {batch.get('timestamp') or ''}")
-    lines.append(f"Question Count: {len(questions)}")
-    lines.append("=" * 80)
-    lines.append("")
-
-    for idx, question in enumerate(questions, start=1):
-        lines.append(f"Question {idx}")
-        lines.append(f"Reference: MIR {question['ano']} - Q{question['num']}")
-        lines.append(f"Status: {question.get('status') or ''}")
-        lines.append(f"Revised: {'Yes' if int(question.get('revised', 0)) else 'No'}")
-        lines.append("")
-        lines.append("Enunciado:")
-        lines.append(question.get("enunciado") or "")
-        lines.append("")
-        lines.append("Opciones:")
-        for opt_idx, option in enumerate(question.get("opciones", []), start=1):
-            lines.append(f"  {opt_idx}. {option}")
-        lines.append("")
-        lines.append(f"RC: {question.get('rc') or ''}")
-        lines.append(f"Tema: {question.get('tema') or ''}")
-        lines.append(f"Especialidad: {question.get('especialidad') or ''}")
-        lines.append(f"Dificultad: {question.get('dificultad') or ''}")
-        lines.append("Explicacion:")
-        lines.append(question.get("explicacion") or "")
-        lines.append("-" * 80)
-        lines.append("")
-
-    return "\n".join(lines)
 
 
 class DatabaseAdminWorker(QThread):
@@ -97,6 +62,7 @@ class DatabaseAdminWorker(QThread):
     def _export_selected_batch(self):
         extraction_id = self.payload["extraction_id"]
         save_path = self.payload["save_path"]
+        include_header = bool(self.payload.get("include_header", False))
 
         batches = get_extractions()
         batch = next((row for row in batches if row["id"] == extraction_id), None)
@@ -107,7 +73,23 @@ class DatabaseAdminWorker(QThread):
         if not questions:
             raise ValueError("Selected batch does not contain any questions.")
 
-        content = _build_batch_export_template(batch, questions)
+        header_details = None
+        if include_header:
+            header_details = [
+                f"Source: Database Admin Console",
+                f"Batch ID: {batch['id']}",
+                f"Filename: {batch.get('filename') or ''}",
+                f"Page Range: {batch.get('page_range') or ''}",
+                f"Timestamp: {batch.get('timestamp') or ''}",
+                f"Question Count: {len(questions)}",
+            ]
+
+        content = render_export_document(
+            questions,
+            include_header=include_header,
+            header_title="Batch Export Summary",
+            header_details=header_details,
+        )
         with open(save_path, "w", encoding="utf-8") as handle:
             handle.write(content)
 
@@ -165,16 +147,23 @@ class ManageDBTab(QWidget):
         layout.addWidget(log_group)
 
         batch_group = QGroupBox("Batch Operations")
-        batch_layout = QHBoxLayout(batch_group)
+        batch_layout = QVBoxLayout(batch_group)
+
+        batch_button_row = QHBoxLayout()
 
         self.btn_delete_batch = QPushButton("Delete Selected Batch")
         self.btn_delete_batch.setStyleSheet("background-color: #b91c1c; color: white; font-weight: bold;")
         self.btn_delete_batch.clicked.connect(self.delete_selected_batch)
-        batch_layout.addWidget(self.btn_delete_batch)
+        batch_button_row.addWidget(self.btn_delete_batch)
 
         self.btn_export_batch = QPushButton("Export Selected Batch")
         self.btn_export_batch.clicked.connect(self.export_selected_batch)
-        batch_layout.addWidget(self.btn_export_batch)
+        batch_button_row.addWidget(self.btn_export_batch)
+
+        batch_layout.addLayout(batch_button_row)
+
+        self.chk_include_export_header = QCheckBox("Include export header")
+        batch_layout.addWidget(self.chk_include_export_header)
 
         layout.addWidget(batch_group)
 
@@ -325,6 +314,7 @@ class ManageDBTab(QWidget):
         self.btn_purge_questions.setEnabled(not busy)
         self.btn_nuke_database.setEnabled(not busy)
         self.btn_refresh.setEnabled(not busy)
+        self.chk_include_export_header.setEnabled(not busy)
 
     def _set_status(self, text):
         self.lbl_status.setText(text)
@@ -445,6 +435,7 @@ class ManageDBTab(QWidget):
             {
                 "extraction_id": batch["id"],
                 "save_path": save_path,
+                "include_header": self.chk_include_export_header.isChecked(),
             }
         )
 

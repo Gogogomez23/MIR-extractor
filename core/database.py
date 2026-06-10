@@ -241,29 +241,88 @@ def get_extractions():
     ]
 
 
-def get_all_questions(sort_by_year=False, extraction_id=None):
+def get_unique_specialties():
     conn = _connect()
     cursor = conn.cursor()
 
-    query = """
-        SELECT id, num, ano, enunciado, opciones_json, rc, tema, especialidad,
-               dificultad, explicacion, status, status_msg, extraction_id, revised
+    cursor.execute(
+        """
+        SELECT DISTINCT TRIM(especialidad) AS specialty
         FROM questions
-    """
-    params = []
-    if extraction_id is not None:
-        query += " WHERE extraction_id = ?"
-        params.append(extraction_id)
-
-    if sort_by_year:
-        query += " ORDER BY ano DESC, CAST(num AS INTEGER) ASC, id ASC"
-    else:
-        query += " ORDER BY id ASC"
-
-    cursor.execute(query, params)
+        WHERE COALESCE(TRIM(especialidad), '') <> ''
+        ORDER BY specialty COLLATE NOCASE ASC
+        """
+    )
     rows = cursor.fetchall()
     conn.close()
 
+    return [row[0] for row in rows]
+
+
+def _normalize_optional_int(value):
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+
+    try:
+        return int(text_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_question_filters(filters):
+    filters = filters or {}
+    clauses = []
+    params = []
+
+    batch_id = _normalize_optional_int(filters.get("batch_id"))
+    if batch_id is not None:
+        clauses.append("extraction_id = ?")
+        params.append(batch_id)
+
+    year_start = _normalize_optional_int(filters.get("year_start"))
+    year_end = _normalize_optional_int(filters.get("year_end"))
+    if year_start is not None:
+        clauses.append("CAST(ano AS INTEGER) >= ?")
+        params.append(year_start)
+    if year_end is not None:
+        clauses.append("CAST(ano AS INTEGER) <= ?")
+        params.append(year_end)
+
+    specialty = filters.get("specialty")
+    if specialty not in (None, "", "all"):
+        clauses.append("TRIM(especialidad) = ?")
+        params.append(str(specialty).strip())
+
+    review_status = str(filters.get("review_status", "all")).strip().lower()
+    if review_status == "revised":
+        clauses.append("COALESCE(revised, 0) = 1")
+    elif review_status == "pending":
+        clauses.append("COALESCE(revised, 0) = 0")
+
+    return clauses, params
+
+
+def _build_order_clause(sorting_mode):
+    mode = (sorting_mode or "id").strip().lower()
+    order_map = {
+        "id": "ORDER BY id ASC",
+        "year": "ORDER BY CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC",
+        "tema": (
+            "ORDER BY COALESCE(NULLIF(TRIM(tema), ''), 'ZZZ') COLLATE NOCASE ASC, "
+            "CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC"
+        ),
+        "num": "ORDER BY CAST(num AS INTEGER) ASC, CAST(ano AS INTEGER) DESC, id ASC",
+    }
+    return order_map.get(mode, order_map["id"])
+
+
+def _rows_to_questions(rows):
     questions = []
     for row in rows:
         questions.append({
@@ -283,6 +342,56 @@ def get_all_questions(sort_by_year=False, extraction_id=None):
             "revised": row[13]
         })
     return questions
+
+
+def get_filtered_questions(filters=None, sorting_mode="id"):
+    conn = _connect()
+    cursor = conn.cursor()
+
+    clauses, params = _build_question_filters(filters)
+    query = """
+        SELECT id, num, ano, enunciado, opciones_json, rc, tema, especialidad,
+               dificultad, explicacion, status, status_msg, extraction_id, revised
+        FROM questions
+    """
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    query += f" {_build_order_clause(sorting_mode)}"
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return _rows_to_questions(rows)
+
+
+def get_filtered_questions_count(filters=None):
+    conn = _connect()
+    cursor = conn.cursor()
+
+    clauses, params = _build_question_filters(filters)
+    query = "SELECT COUNT(*) FROM questions"
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    cursor.execute(query, params)
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+
+def count_filtered_questions(filters=None):
+    return get_filtered_questions_count(filters)
+
+
+def get_all_questions(sort_by_year=False, extraction_id=None):
+    filters = {}
+    if extraction_id is not None:
+        filters["batch_id"] = extraction_id
+
+    sorting_mode = "year" if sort_by_year else "id"
+    return get_filtered_questions(filters=filters, sorting_mode=sorting_mode)
 
 
 def update_question(q_id, data):

@@ -4,10 +4,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFileDialog, QMessageBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QComboBox)
+from core.export_format import render_quick_export_text
 from ui.workers import PDFParseWorker
 from core.database import save_questions, get_all_questions
 import pdfplumber
-
 
 class ImportTab(QWidget):
     question_selected_for_edit = pyqtSignal(dict)
@@ -56,8 +56,9 @@ class ImportTab(QWidget):
         self.combo_sort.currentIndexChanged.connect(self.load_table_data)
         control_layout.addWidget(self.combo_sort)
 
-        self.btn_export = QPushButton("Export Template Doc")
+        self.btn_export = QPushButton("Quick Export (All)")
         self.btn_export.setEnabled(False)
+        self.btn_export.setToolTip("Export every stored question without filters.")
         self.btn_export.clicked.connect(self.export_document)
         control_layout.addWidget(self.btn_export)
         layout.addLayout(control_layout)
@@ -210,16 +211,7 @@ class ImportTab(QWidget):
 
         try:
             with open(save_path, "w", encoding="utf-8") as f:
-                for q in questions:
-                    f.write(f"Enunciado: {q['enunciado']}\n\n")
-                    f.write("Opciones:\n")
-                    for i, opt in enumerate(q['opciones'], 1):
-                        f.write(f"    {i}. {opt}\n")
-                    f.write(f"\nRC: {q['rc']}\n\n")
-                    f.write(
-                        f"Tema: {q['tema']} | Especialidad: {q['especialidad']} | Dificultad: {q['dificultad']} | Año: {q['ano']}\n\n")
-                    f.write(f"Explicación:\n{q['explicacion']}\n")
-                    f.write("_________________________________________________________________________________\n\n")
+                f.write(render_quick_export_text(questions))
             QMessageBox.information(self, "Success", f"Document generated at:\n{save_path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed saving output file down: {str(e)}")
