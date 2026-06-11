@@ -1,11 +1,11 @@
 import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QFormLayout, QGroupBox, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFileDialog, QMessageBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QComboBox)
 from core.export_format import render_quick_export_text
-from ui.workers import PDFParseWorker
+from ui.workers import PDFParseWorker, parse_year_filter_bounds
 from core.database import save_questions, get_all_questions, get_latest_extraction_id
 import pdfplumber
 
@@ -18,6 +18,12 @@ class ImportTab(QWidget):
         self.pdf_path = ""
         self.current_batch_id = None
         self.current_questions = []
+        self.current_intake_settings = {
+            "year_filter_text": "",
+            "ignore_images": False,
+            "duplicate_policy": "allow_tag",
+        }
+        self._stored_page_values = ("6", "6")
         self.init_ui()
 
     def init_ui(self):
@@ -45,6 +51,10 @@ class ImportTab(QWidget):
         self.entry_end = QLineEdit("6")
         self.entry_end.setFixedWidth(50)
         control_layout.addWidget(self.entry_end)
+
+        self.chk_process_entire_document = QCheckBox("Process Entire Document")
+        self.chk_process_entire_document.toggled.connect(self.handle_process_entire_document_toggled)
+        control_layout.addWidget(self.chk_process_entire_document)
 
         self.btn_extract = QPushButton("Extract Range")
         self.btn_extract.setStyleSheet("background-color: green; color: white;")
@@ -78,6 +88,25 @@ class ImportTab(QWidget):
         control_layout.addWidget(self.btn_export)
         layout.addLayout(control_layout)
 
+        filter_group = QGroupBox("Intake Validation Filters")
+        filter_form = QFormLayout(filter_group)
+
+        self.entry_year_filter = QLineEdit()
+        self.entry_year_filter.setPlaceholderText("e.g., 2022 or 2018-2022")
+        self.entry_year_filter.setMaximumWidth(170)
+        filter_form.addRow("Year Filter:", self.entry_year_filter)
+
+        self.chk_ignore_images = QCheckBox("Ignore questions with images")
+        filter_form.addRow("", self.chk_ignore_images)
+
+        self.combo_duplicate_policy = QComboBox()
+        self.combo_duplicate_policy.addItem("Allow & Tag as Duplicate", "allow_tag")
+        self.combo_duplicate_policy.addItem("Skip Automatically", "skip")
+        self.combo_duplicate_policy.addItem("Overwrite Existing Record", "overwrite")
+        filter_form.addRow("Duplicate Handling Policy:", self.combo_duplicate_policy)
+
+        layout.addWidget(filter_group)
+
         # Questions Display Grid Table
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
@@ -103,21 +132,90 @@ class ImportTab(QWidget):
         if file_path:
             self.pdf_path = file_path
             self.lbl_file.setText(os.path.basename(file_path))
+            if self.chk_process_entire_document.isChecked():
+                self._sync_full_document_page_range_preview()
+
+    def handle_process_entire_document_toggled(self, checked):
+        if checked:
+            self._stored_page_values = (self.entry_start.text(), self.entry_end.text())
+            self.entry_start.setEnabled(False)
+            self.entry_end.setEnabled(False)
+            self._sync_full_document_page_range_preview()
+            return
+
+        self.entry_start.setEnabled(True)
+        self.entry_end.setEnabled(True)
+        start_value, end_value = self._stored_page_values
+        if start_value:
+            self.entry_start.setText(start_value)
+        if end_value:
+            self.entry_end.setText(end_value)
+
+    def _get_pdf_page_count(self, show_error=True):
+        if not self.pdf_path:
+            return None
+
+        try:
+            with pdfplumber.open(self.pdf_path) as pdf:
+                return len(pdf.pages)
+        except Exception as exc:
+            if show_error:
+                QMessageBox.critical(
+                    self,
+                    "PDF Error",
+                    f"Could not read the selected PDF document:\n{exc}"
+                )
+            return None
+
+    def _sync_full_document_page_range_preview(self):
+        total_doc_pages = self._get_pdf_page_count(show_error=False)
+        if not total_doc_pages:
+            return
+
+        self.entry_start.setText("1")
+        self.entry_end.setText(str(total_doc_pages))
+
+    def _collect_intake_settings(self):
+        year_text = self.entry_year_filter.text().strip()
+        try:
+            parse_year_filter_bounds(year_text)
+        except ValueError as exc:
+            return None, str(exc)
+
+        duplicate_policy = self.combo_duplicate_policy.currentData() or "allow_tag"
+
+        return {
+            "year_filter_text": year_text,
+            "ignore_images": self.chk_ignore_images.isChecked(),
+            "duplicate_policy": duplicate_policy,
+        }, None
 
     def start_extraction(self):
         if not self.pdf_path:
             QMessageBox.critical(self, "Error", "Please load a PDF document first.")
             return
 
-        try:
-            start_p = int(self.entry_start.text())
-            end_p = int(self.entry_end.text())
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Page arguments must be whole numbers.")
+        intake_settings, validation_error = self._collect_intake_settings()
+        if validation_error:
+            QMessageBox.critical(self, "Error", validation_error)
             return
 
-        with pdfplumber.open(self.pdf_path) as pdf:
-            total_doc_pages = len(pdf.pages)
+        total_doc_pages = self._get_pdf_page_count()
+        if total_doc_pages is None:
+            return
+
+        if self.chk_process_entire_document.isChecked():
+            start_p = 1
+            end_p = total_doc_pages
+            self.entry_start.setText(str(start_p))
+            self.entry_end.setText(str(end_p))
+        else:
+            try:
+                start_p = int(self.entry_start.text())
+                end_p = int(self.entry_end.text())
+            except ValueError:
+                QMessageBox.critical(self, "Error", "Page arguments must be whole numbers.")
+                return
 
         # Requirement: Throw a soft alert warning if user entry exceeds document bounds
         if start_p < 1:
@@ -139,11 +237,17 @@ class ImportTab(QWidget):
         actual_end_page = min(end_p, total_doc_pages)
         self.current_start_page = start_p
         self.current_end_page = actual_end_page
+        self.current_intake_settings = intake_settings
         self.main_window.progress_bar.setValue(0)
         self.btn_extract.setEnabled(False)
 
         # Thread instantiation execution
-        self.worker = PDFParseWorker(self.pdf_path, start_p, actual_end_page)
+        self.worker = PDFParseWorker(
+            self.pdf_path,
+            start_p,
+            actual_end_page,
+            intake_filters=intake_settings,
+        )
         self.worker.progress_updated.connect(self.main_window.progress_bar.setValue)
         self.worker.parsing_complete.connect(self.handle_parse_success)
         self.worker.parsing_error.connect(self.handle_parse_failure)
@@ -154,20 +258,48 @@ class ImportTab(QWidget):
         self.main_window.progress_bar.setValue(100)
 
         if items:
-            save_questions(
-                items,
-                filename=os.path.basename(self.pdf_path),
-                page_range=f"{self.current_start_page}-{self.current_end_page}"
-            )
-            QMessageBox.information(self, "Success",
-                                    f"Successfully extracted and saved {len(items)} questions to Database!")
-            if hasattr(self.main_window, "handle_database_mutation"):
-                self.main_window.handle_database_mutation()
+            try:
+                save_result = save_questions(
+                    items,
+                    filename=os.path.basename(self.pdf_path),
+                    page_range=f"{self.current_start_page}-{self.current_end_page}",
+                    duplicate_policy=self.current_intake_settings.get("duplicate_policy", "allow_tag")
+                )
+            except Exception as exc:
+                QMessageBox.critical(
+                    self,
+                    "Database Write Error",
+                    f"Could not commit the filtered batch to SQLite:\n{exc}"
+                )
+                return
+
+            inserted = save_result.get("inserted_count", 0)
+            updated = save_result.get("updated_count", 0)
+            skipped = save_result.get("skipped_count", 0)
+
+            if inserted or updated:
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    (
+                        f"Ingested {len(items)} filtered questions.\n"
+                        f"Inserted: {inserted} | Updated: {updated} | Skipped: {skipped}"
+                    ),
+                )
+                if hasattr(self.main_window, "handle_database_mutation"):
+                    self.main_window.handle_database_mutation()
+                else:
+                    self.load_table_data()
             else:
+                QMessageBox.information(
+                    self,
+                    "Ingestion Notice",
+                    "The batch matched the intake filters, but the duplicate policy skipped every row."
+                )
                 self.load_table_data()
         else:
             QMessageBox.warning(self, "Extraction Notice",
-                                "No structural layout items matches found in target page range bounds.")
+                                "No questions matched the active intake filters.")
 
     def handle_parse_failure(self, err_msg):
         self.btn_extract.setEnabled(True)

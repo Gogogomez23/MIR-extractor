@@ -139,29 +139,76 @@ def init_db():
     conn.close()
 
 
-def _find_duplicate_question(cursor, ano, num, especialidad, current_extraction_id):
+def _find_question_by_ref(cursor, ano, num):
     cursor.execute(
         """
         SELECT id, extraction_id
         FROM questions
         WHERE ano = ?
           AND num = ?
-          AND especialidad = ?
-          AND (extraction_id IS NULL OR extraction_id <> ?)
-        ORDER BY id ASC
+        ORDER BY id DESC
         LIMIT 1
         """,
-        (ano, num, especialidad, current_extraction_id)
+        (ano, num)
     )
     return cursor.fetchone()
 
 
-def save_questions(questions_list, filename="", page_range=""):
+def _normalize_duplicate_policy(policy):
+    normalized = str(policy or "allow_tag").strip().lower()
+    policy_map = {
+        "allow_tag": "allow_tag",
+        "allow & tag as duplicate": "allow_tag",
+        "allow": "allow_tag",
+        "skip": "skip",
+        "skip automatically": "skip",
+        "overwrite": "overwrite",
+        "overwrite existing record": "overwrite",
+    }
+    return policy_map.get(normalized, "allow_tag")
+
+
+def _update_question_record(cursor, question_id, question_data, extraction_id):
+    cursor.execute(
+        """
+        UPDATE questions SET
+            num = ?, ano = ?, enunciado = ?, opciones_json = ?, rc = ?,
+            tema = ?, especialidad = ?, dificultad = ?,
+            explicacion = ?, status = ?, status_msg = ?, extraction_id = ?, revised = ?
+        WHERE id = ?
+        """,
+        (
+            question_data.get("num", ""),
+            question_data.get("ano", ""),
+            question_data.get("enunciado", ""),
+            json.dumps(question_data.get("opciones", [])),
+            question_data.get("rc", ""),
+            question_data.get("tema", ""),
+            question_data.get("especialidad", ""),
+            question_data.get("dificultad", ""),
+            question_data.get("explicacion", ""),
+            question_data.get("status", ""),
+            question_data.get("status_msg", ""),
+            extraction_id,
+            int(question_data.get("revised", 0)),
+            question_id,
+        )
+    )
+
+
+def save_questions(questions_list, filename="", page_range="", duplicate_policy="allow_tag"):
     if not questions_list:
-        return None
+        return {
+            "extraction_id": None,
+            "inserted_count": 0,
+            "updated_count": 0,
+            "skipped_count": 0,
+            "policy": _normalize_duplicate_policy(duplicate_policy),
+        }
 
     conn = _connect()
     cursor = conn.cursor()
+    policy = _normalize_duplicate_policy(duplicate_policy)
 
     cursor.execute(
         """
@@ -172,19 +219,31 @@ def save_questions(questions_list, filename="", page_range=""):
     )
     extraction_id = cursor.lastrowid
 
+    inserted_count = 0
+    updated_count = 0
+    skipped_count = 0
+
     for q in questions_list:
         status = q.get("status", "")
         status_msg = q.get("status_msg", "")
-        duplicate_row = _find_duplicate_question(
+        duplicate_row = _find_question_by_ref(
             cursor,
             q.get("ano", ""),
             q.get("num", ""),
-            q.get("especialidad", ""),
-            extraction_id
         )
-        if duplicate_row:
+
+        if duplicate_row and policy == "skip":
+            skipped_count += 1
+            continue
+
+        if duplicate_row and policy == "overwrite":
+            _update_question_record(cursor, duplicate_row[0], q, extraction_id)
+            updated_count += 1
+            continue
+
+        if duplicate_row and policy == "allow_tag":
             status = "🟡 DUPLICATE"
-            status_msg = "Duplicate question already exists in a previous batch."
+            status_msg = "Duplicate question already exists in the database."
 
         cursor.execute(
             """
@@ -210,10 +269,21 @@ def save_questions(questions_list, filename="", page_range=""):
                 int(q.get("revised", 0))
             )
         )
+        inserted_count += 1
+
+    if inserted_count == 0 and updated_count == 0:
+        cursor.execute("DELETE FROM extractions WHERE id = ?", (extraction_id,))
+        extraction_id = None
 
     conn.commit()
     conn.close()
-    return extraction_id
+    return {
+        "extraction_id": extraction_id,
+        "inserted_count": inserted_count,
+        "updated_count": updated_count,
+        "skipped_count": skipped_count,
+        "policy": policy,
+    }
 
 
 def get_extractions():

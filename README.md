@@ -1,5 +1,5 @@
 # Production MIR Extractor Engine Suite
-v1.6.0-alpha
+v1.7.0-alpha
 
 An enterprise-grade Python application built using the PyQt6 desktop ecosystem framework. It delivers a fast, local, and reliable pipeline to convert raw PDF documents into structured clinical quiz formats.
 
@@ -7,6 +7,7 @@ An enterprise-grade Python application built using the PyQt6 desktop ecosystem f
 * **Multithreaded Background Operations:** Parsing calculations are handled on a secondary worker thread (`QThread`) to ensure the graphical interface never enters a frozen state.
 * **Relational Local Storage Database:** Persistent storage is powered by a local SQLite engine with parent `extractions` batches, foreign-key linked questions, duplicate detection across prior batches, and a per-question revision flag.
 * **Current Batch Import View:** The import tab now shows only the absolute latest extraction batch, split across `Año` and `Nº Pregunta`, with a quick export path scoped to that current batch.
+* **Intake Validation Filters:** The import workflow supports full-document intake mode, year and keyword pre-ingest filters, and selectable duplicate handling policies before rows are committed to SQLite.
 * **Database Explorer Master Log:** A dedicated read-only tab provides a filtered historical view of every stored question, with batch and revision filters plus direct routing back into the edit workbench.
 * **Database Admin Console:** A dedicated tab manages extraction batches, batch exports, safe purges, destructive resets, and live database metrics from the same SQLite file.
 * **Custom Export Wizard:** A separate export tab supports batch/year/specialty/revision filters, multiple ordering modes, and uses the exact same quick-export text template for filtered document generation, with an optional informational header.
