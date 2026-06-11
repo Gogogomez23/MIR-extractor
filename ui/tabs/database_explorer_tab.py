@@ -83,6 +83,14 @@ class DatabaseExplorerTab(QWidget):
         self.combo_sort_view.addItem("Organize by Topic", "tema")
         self.combo_sort_view.currentIndexChanged.connect(self.handle_filter_change)
         filter_row.addWidget(self.combo_sort_view)
+        # Sorting direction selector (descending by default)
+        self.combo_sort_dir = QComboBox()
+        self.combo_sort_dir.addItem("Descending", "desc")
+        self.combo_sort_dir.addItem("Ascending", "asc")
+        # keep prior default behavior (primary ordering ascending) by selecting Ascending
+        self.combo_sort_dir.setCurrentIndex(1)
+        self.combo_sort_dir.currentIndexChanged.connect(self.handle_filter_change)
+        filter_row.addWidget(self.combo_sort_dir)
 
         filter_row.addWidget(QLabel("Revision Filter:"))
         self.combo_revision_filter = QComboBox()
@@ -169,7 +177,8 @@ class DatabaseExplorerTab(QWidget):
         return {
             "batch_id": self.combo_batch_filter.currentData(),
             "review_status": self.combo_revision_filter.currentData(),
-            "sorting_mode": self.combo_sort_view.currentData()
+            "sorting_mode": self.combo_sort_view.currentData(),
+            "sorting_dir": getattr(self, "combo_sort_dir", None) and self.combo_sort_dir.currentData()
         }
 
     def _restore_combo_selection(self, combo, target_value, default_index=0):

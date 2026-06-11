@@ -54,10 +54,22 @@ class ImportTab(QWidget):
         # Grid View Sort Order Filter Dropdown
         control_layout.addWidget(QLabel("View Sorting Mode:"))
         self.combo_sort = QComboBox()
-        self.combo_sort.addItems(["Order Added (ID)", "Organize by Year", "Organize by Question Number",
-                                  "Organize by Topic"])
+        # use data values so we can pass explicit sorting modes
+        self.combo_sort.addItem("Order Added (ID)", "id")
+        self.combo_sort.addItem("Organize by Year", "year")
+        self.combo_sort.addItem("Organize by Question Number", "num")
+        self.combo_sort.addItem("Organize by Topic", "tema")
         self.combo_sort.currentIndexChanged.connect(self.load_table_data)
         control_layout.addWidget(self.combo_sort)
+
+        control_layout.addWidget(QLabel("Direction:"))
+        self.combo_sort_dir = QComboBox()
+        self.combo_sort_dir.addItem("Descending", "desc")
+        self.combo_sort_dir.addItem("Ascending", "asc")
+        # keep prior default ordering behavior (ascending primary order)
+        self.combo_sort_dir.setCurrentIndex(1)
+        self.combo_sort_dir.currentIndexChanged.connect(self.load_table_data)
+        control_layout.addWidget(self.combo_sort_dir)
 
         self.btn_export = QPushButton("Quick Export (Current Batch)")
         self.btn_export.setEnabled(False)
@@ -176,14 +188,13 @@ class ImportTab(QWidget):
                 self.table.setUpdatesEnabled(True)
             return
 
-        sort_by_year = (self.combo_sort.currentIndex() == 1)
-        sort_by_quest = (self.combo_sort.currentIndex() == 2)
-        sort_by_topic = (self.combo_sort.currentIndex() == 3)
+        # prefer explicit data-driven sorting mode + direction when available
+        sorting_mode = self.combo_sort.currentData() or "id"
+        sorting_dir = getattr(self, "combo_sort_dir", None) and self.combo_sort_dir.currentData() or "desc"
         questions = get_all_questions(
             extraction_id=self.current_batch_id,
-            sort_by_year=sort_by_year,
-            sort_by_quest_num=sort_by_quest,
-            sort_by_tema=sort_by_topic
+            sorting_mode=sorting_mode,
+            sorting_dir=sorting_dir
         )
         self.current_questions = list(questions)
 

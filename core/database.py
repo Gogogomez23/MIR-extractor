@@ -325,16 +325,22 @@ def _build_question_filters(filters):
     return clauses, params
 
 
-def _build_order_clause(sorting_mode):
+def _build_order_clause(sorting_mode, sorting_dir="asc"):
     mode = (sorting_mode or "id").strip().lower()
+    dir_token = "ASC" if str(sorting_dir or "").strip().lower() == "asc" else "DESC"
+
+    # For compound orderings we apply the requested direction to the primary field.
+    # Tie-breakers keep stable directions for predictable results.
     order_map = {
-        "id": "ORDER BY id ASC",
-        "year": "ORDER BY CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC",
+        "id": f"ORDER BY id {dir_token}",
+        "year": (
+            f"ORDER BY CAST(ano AS INTEGER) {dir_token}, CAST(num AS INTEGER) ASC, id ASC"
+        ),
         "tema": (
-            "ORDER BY COALESCE(NULLIF(TRIM(tema), ''), 'ZZZ') COLLATE NOCASE ASC, "
+            f"ORDER BY COALESCE(NULLIF(TRIM(tema), ''), 'ZZZ') COLLATE NOCASE {dir_token}, "
             "CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC"
         ),
-        "num": "ORDER BY CAST(num AS INTEGER) ASC, CAST(ano AS INTEGER) DESC, id ASC",
+        "num": f"ORDER BY CAST(num AS INTEGER) {dir_token}, CAST(ano AS INTEGER) DESC, id ASC",
     }
     return order_map.get(mode, order_map["id"])
 
@@ -361,7 +367,7 @@ def _rows_to_questions(rows):
     return questions
 
 
-def get_filtered_questions(filters=None, sorting_mode="id"):
+def get_filtered_questions(filters=None, sorting_mode="id", sorting_dir="asc"):
     conn = _connect()
     cursor = conn.cursor()
 
@@ -375,7 +381,7 @@ def get_filtered_questions(filters=None, sorting_mode="id"):
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
 
-    query += f" {_build_order_clause(sorting_mode)}"
+    query += f" {_build_order_clause(sorting_mode, sorting_dir)}"
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -397,23 +403,30 @@ def get_explorer_questions(filters=None):
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
 
+    # allow an explicit sorting mode + direction from the filters dict
     sorting_mode = None
+    sorting_dir = "asc"
     if isinstance(filters, dict):
         sorting_mode = filters.get("sorting_mode")
+        sorting_dir = filters.get("sorting_dir") or sorting_dir
 
     mode = (sorting_mode or "id").strip().lower()
+    dir_token = "ASC" if str(sorting_dir or "").strip().lower() == "asc" else "DESC"
+
+    # Keep primary grouping by extraction (most recent batches first), then apply
+    # requested direction to the main ordering key for the chosen mode.
     order_map = {
-        "id": "ORDER BY COALESCE(extraction_id, 0) DESC, id ASC",
+        "id": f"ORDER BY COALESCE(extraction_id, 0) DESC, id {dir_token}",
         "year": (
-            "ORDER BY COALESCE(extraction_id, 0) DESC, CAST(ano AS INTEGER) DESC, "
+            f"ORDER BY COALESCE(extraction_id, 0) DESC, CAST(ano AS INTEGER) {dir_token}, "
             "CAST(num AS INTEGER) ASC, id ASC"
         ),
         "tema": (
-            "ORDER BY COALESCE(extraction_id, 0) DESC, "
-            "COALESCE(NULLIF(TRIM(tema), ''), 'ZZZ') COLLATE NOCASE ASC, "
+            f"ORDER BY COALESCE(extraction_id, 0) DESC, "
+            f"COALESCE(NULLIF(TRIM(tema), ''), 'ZZZ') COLLATE NOCASE {dir_token}, "
             "CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC"
         ),
-        "num": "ORDER BY COALESCE(extraction_id, 0) DESC, CAST(num AS INTEGER) ASC, CAST(ano AS INTEGER) DESC, id ASC",
+        "num": f"ORDER BY COALESCE(extraction_id, 0) DESC, CAST(num AS INTEGER) {dir_token}, CAST(ano AS INTEGER) DESC, id ASC",
     }
 
     query += " " + order_map.get(mode, order_map["id"])
@@ -443,21 +456,31 @@ def count_filtered_questions(filters=None):
     return get_filtered_questions_count(filters)
 
 
-def get_all_questions(sort_by_year=False, extraction_id=None, sort_by_quest_num=False, sort_by_tema=False):
+def get_all_questions(sort_by_year=False, extraction_id=None, sort_by_quest_num=False, sort_by_tema=False,
+                      sorting_mode=None, sorting_dir="asc"):
+    """
+    Return all questions optionally filtered to a single extraction (batch) and sorted.
+
+    This function supports two calling conventions for backward-compatibility:
+    - Old: use boolean flags (sort_by_year, sort_by_quest_num, sort_by_tema)
+    - New: pass explicit sorting_mode ("id","year","num","tema") and sorting_dir ("asc"/"desc").
+    """
     filters = {}
     if extraction_id is not None:
         filters["batch_id"] = extraction_id
 
-    # sorting_mode = "year" if sort_by_year else "id"
-    if sort_by_year:
-        sorting_mode = "year"
-    elif sort_by_quest_num:
-        sorting_mode = "num"
-    elif sort_by_tema:
-        sorting_mode = "tema"
-    else:
-        sorting_mode = "id"
-    return get_filtered_questions(filters=filters, sorting_mode=sorting_mode)
+    # Determine sorting_mode: prefer explicit argument when provided.
+    if sorting_mode is None:
+        if sort_by_year:
+            sorting_mode = "year"
+        elif sort_by_quest_num:
+            sorting_mode = "num"
+        elif sort_by_tema:
+            sorting_mode = "tema"
+        else:
+            sorting_mode = "id"
+
+    return get_filtered_questions(filters=filters, sorting_mode=sorting_mode, sorting_dir=sorting_dir)
 
 
 def update_question(q_id, data):
