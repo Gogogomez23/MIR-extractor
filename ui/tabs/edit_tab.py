@@ -10,6 +10,7 @@ from core.database import (
     update_question,
     update_question_revision,
 )
+from core.database import delete_question
 
 
 class EditTab(QWidget):
@@ -117,6 +118,11 @@ class EditTab(QWidget):
         self.btn_save_changes.setStyleSheet("background-color: #2563eb; color: white; font-weight: bold;")
         self.btn_save_changes.clicked.connect(self.commit_form_updates)
         btn_layout.addWidget(self.btn_save_changes)
+        # Delete button: dangerous action so styled in red and positioned with Save
+        self.btn_delete_question = QPushButton("Delete Question")
+        self.btn_delete_question.setStyleSheet("background-color: #dc2626; color: white; font-weight: bold;")
+        self.btn_delete_question.clicked.connect(self.confirm_and_delete_question)
+        btn_layout.addWidget(self.btn_delete_question)
         layout.addLayout(btn_layout)
 
         self.toggle_form_state(False)
@@ -213,11 +219,48 @@ class EditTab(QWidget):
         self.txt_explicacion.setEnabled(enabled)
         self.btn_ai_mock.setEnabled(enabled)
         self.btn_save_changes.setEnabled(enabled)
+        # Delete should only be enabled when a question is selected (enabled=True)
+        self.btn_delete_question.setEnabled(enabled)
         self.chk_mark_revised.setEnabled(enabled)
         self.btn_prev_question.setEnabled(enabled and self.has_previous_question())
         self.btn_next_question.setEnabled(enabled and self.has_next_question())
         for ledit in self.opt_inputs:
             ledit.setEnabled(enabled)
+
+    def confirm_and_delete_question(self):
+        if not self.current_q_id:
+            return
+
+        # Ask for explicit confirmation
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            "Are you sure you want to permanently delete this question from the database?\n\nThis action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            result = delete_question(self.current_q_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Delete Error", f"Failed to delete question: {str(e)}")
+            return
+
+        if result.get("deleted", 0) > 0:
+            QMessageBox.information(self, "Deleted", "Question removed from database.")
+            # Clear current selection and refresh lists
+            self.current_q_id = None
+            self.current_question_data = None
+            # Refresh batch selector and question list preserving current batch
+            self.refresh_batch_selector(select_batch_id=self.current_batch_id)
+            self.refresh_question_list(select_q_id=None, extraction_id=self.current_batch_id)
+            self.update_active_ref_label()
+            self.update_revision_indicator()
+            self.update_navigation_buttons()
+            self.database_mutated.emit()
+        else:
+            QMessageBox.warning(self, "Not Found", "Question not found or already deleted.")
 
     def clear_form_fields(self):
         self.entry_question_num.clear()

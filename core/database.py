@@ -528,6 +528,28 @@ def update_question_revision(q_id, revised):
     conn.close()
 
 
+def delete_question(q_id):
+    """Delete a single question by id.
+
+    Returns a dict with deleted count and the id that was requested.
+    """
+    conn = _connect()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM questions WHERE id = ?", (q_id,))
+    exists = cursor.fetchone()[0]
+    if not exists:
+        conn.close()
+        return {"deleted": 0, "id": q_id}
+
+    cursor.execute("DELETE FROM questions WHERE id = ?", (q_id,))
+    deleted = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+    return {"deleted": deleted, "id": q_id}
+
+
 def delete_batch(extraction_id):
     conn = _connect()
     cursor = conn.cursor()
