@@ -200,13 +200,20 @@ class DatabaseExplorerTab(QWidget):
             self.lbl_status.setText("Loading database history...")
 
     def _format_status_flag(self, status_text):
+        # Return a short visible status marker. Include an emoji where possible
+        # but also include a short textual label to avoid invisible glyph issues.
         normalized = (status_text or "").upper()
         if "🟢" in normalized or "OK" in normalized:
-            return "🟢"
+            return "🟢 OK"
         if "🔴" in normalized or "ERROR" in normalized:
-            return "🔴"
+            return "🔴 ERR"
         if "🟡" in normalized or "REVIEW" in normalized or "DUPLICATE" in normalized:
-            return "🟡"
+            return "🟡 REV"
+        # Fallback: if there's a custom status string, show its short form
+        if normalized:
+            # take first 8 chars as a short label
+            short = normalized[:8]
+            return f"🟡 {short}"
         return "🟡"
 
     def _truncate_preview(self, text, limit=80):
