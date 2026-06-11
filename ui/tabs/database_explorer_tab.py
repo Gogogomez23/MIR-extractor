@@ -74,6 +74,16 @@ class DatabaseExplorerTab(QWidget):
         self.combo_batch_filter.currentIndexChanged.connect(self.handle_filter_change)
         filter_row.addWidget(self.combo_batch_filter, 1)
 
+        filter_row.addWidget(QLabel("View Sorting Modes"))
+        self.combo_sort_view = QComboBox()
+        # add items with explicit internal data values that match database sorting modes
+        self.combo_sort_view.addItem("Order Added (ID)", "id")
+        self.combo_sort_view.addItem("Organize by Year", "year")
+        self.combo_sort_view.addItem("Organize by Question Number", "num")
+        self.combo_sort_view.addItem("Organize by Topic", "tema")
+        self.combo_sort_view.currentIndexChanged.connect(self.handle_filter_change)
+        filter_row.addWidget(self.combo_sort_view)
+
         filter_row.addWidget(QLabel("Revision Filter:"))
         self.combo_revision_filter = QComboBox()
         self.combo_revision_filter.addItem("All Statuses", "all")
@@ -159,6 +169,7 @@ class DatabaseExplorerTab(QWidget):
         return {
             "batch_id": self.combo_batch_filter.currentData(),
             "review_status": self.combo_revision_filter.currentData(),
+            "sorting_mode": self.combo_sort_view.currentData()
         }
 
     def _restore_combo_selection(self, combo, target_value, default_index=0):

@@ -397,10 +397,26 @@ def get_explorer_questions(filters=None):
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
 
-    query += (
-        " ORDER BY COALESCE(extraction_id, 0) DESC, "
-        "CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC"
-    )
+    sorting_mode = None
+    if isinstance(filters, dict):
+        sorting_mode = filters.get("sorting_mode")
+
+    mode = (sorting_mode or "id").strip().lower()
+    order_map = {
+        "id": "ORDER BY COALESCE(extraction_id, 0) DESC, id ASC",
+        "year": (
+            "ORDER BY COALESCE(extraction_id, 0) DESC, CAST(ano AS INTEGER) DESC, "
+            "CAST(num AS INTEGER) ASC, id ASC"
+        ),
+        "tema": (
+            "ORDER BY COALESCE(extraction_id, 0) DESC, "
+            "COALESCE(NULLIF(TRIM(tema), ''), 'ZZZ') COLLATE NOCASE ASC, "
+            "CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC"
+        ),
+        "num": "ORDER BY COALESCE(extraction_id, 0) DESC, CAST(num AS INTEGER) ASC, CAST(ano AS INTEGER) DESC, id ASC",
+    }
+
+    query += " " + order_map.get(mode, order_map["id"])
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -427,12 +443,20 @@ def count_filtered_questions(filters=None):
     return get_filtered_questions_count(filters)
 
 
-def get_all_questions(sort_by_year=False, extraction_id=None):
+def get_all_questions(sort_by_year=False, extraction_id=None, sort_by_quest_num=False, sort_by_tema=False):
     filters = {}
     if extraction_id is not None:
         filters["batch_id"] = extraction_id
 
-    sorting_mode = "year" if sort_by_year else "id"
+    # sorting_mode = "year" if sort_by_year else "id"
+    if sort_by_year:
+        sorting_mode = "year"
+    elif sort_by_quest_num:
+        sorting_mode = "num"
+    elif sort_by_tema:
+        sorting_mode = "tema"
+    else:
+        sorting_mode = "id"
     return get_filtered_questions(filters=filters, sorting_mode=sorting_mode)
 
 

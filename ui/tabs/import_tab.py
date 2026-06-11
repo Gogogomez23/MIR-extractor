@@ -54,7 +54,8 @@ class ImportTab(QWidget):
         # Grid View Sort Order Filter Dropdown
         control_layout.addWidget(QLabel("View Sorting Mode:"))
         self.combo_sort = QComboBox()
-        self.combo_sort.addItems(["Order Added (ID)", "Organize by Year"])
+        self.combo_sort.addItems(["Order Added (ID)", "Organize by Year", "Organize by Question Number",
+                                  "Organize by Topic"])
         self.combo_sort.currentIndexChanged.connect(self.load_table_data)
         control_layout.addWidget(self.combo_sort)
 
@@ -176,9 +177,13 @@ class ImportTab(QWidget):
             return
 
         sort_by_year = (self.combo_sort.currentIndex() == 1)
+        sort_by_quest = (self.combo_sort.currentIndex() == 2)
+        sort_by_topic = (self.combo_sort.currentIndex() == 3)
         questions = get_all_questions(
             extraction_id=self.current_batch_id,
             sort_by_year=sort_by_year,
+            sort_by_quest_num=sort_by_quest,
+            sort_by_tema=sort_by_topic
         )
         self.current_questions = list(questions)
 
