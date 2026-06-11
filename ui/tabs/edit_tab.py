@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QTextEdit,
     QComboBox, QPushButton, QMessageBox, QCheckBox
@@ -13,6 +13,8 @@ from core.database import (
 
 
 class EditTab(QWidget):
+    database_mutated = pyqtSignal()
+
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
@@ -366,6 +368,7 @@ class EditTab(QWidget):
         if self.current_question_data is not None:
             self.current_question_data["revised"] = revised
         self.update_revision_indicator()
+        self.database_mutated.emit()
 
     def trigger_ai_mockup(self):
         current_text = self.txt_explicacion.toPlainText().strip()
@@ -443,11 +446,9 @@ class EditTab(QWidget):
                 "id": self.current_q_id,
                 "extraction_id": self.current_batch_id,
             }
-            self.refresh_data_views(select_batch_id=self.current_batch_id, select_q_id=self.current_q_id)
             self.update_active_ref_label()
             self.update_revision_indicator()
-            if hasattr(self.main_window, "import_tab"):
-                self.main_window.import_tab.load_table_data()
+            self.database_mutated.emit()
         except Exception as e:
             QMessageBox.critical(
                 self,

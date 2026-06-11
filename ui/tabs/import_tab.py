@@ -1,12 +1,12 @@
 import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+from PyQt6.QtWidgets import (QAbstractItemView, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFileDialog, QMessageBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QComboBox)
 from core.export_format import render_quick_export_text
 from ui.workers import PDFParseWorker
-from core.database import save_questions, get_all_questions
+from core.database import save_questions, get_all_questions, get_latest_extraction_id
 import pdfplumber
 
 class ImportTab(QWidget):
@@ -16,6 +16,8 @@ class ImportTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.pdf_path = ""
+        self.current_batch_id = None
+        self.current_questions = []
         self.init_ui()
 
     def init_ui(self):
@@ -56,9 +58,9 @@ class ImportTab(QWidget):
         self.combo_sort.currentIndexChanged.connect(self.load_table_data)
         control_layout.addWidget(self.combo_sort)
 
-        self.btn_export = QPushButton("Quick Export (All)")
+        self.btn_export = QPushButton("Quick Export (Current Batch)")
         self.btn_export.setEnabled(False)
-        self.btn_export.setToolTip("Export every stored question without filters.")
+        self.btn_export.setToolTip("Export only the most recently extracted batch.")
         self.btn_export.clicked.connect(self.export_document)
         control_layout.addWidget(self.btn_export)
         layout.addLayout(control_layout)
@@ -66,8 +68,18 @@ class ImportTab(QWidget):
         # Questions Display Grid Table
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Status", "Reference", "Topic / Specialty", "Enunciado Preview", "Options Count", "RC"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            ["Status", "Año", "Nº Pregunta", "Topic / Specialty", "Enunciado Preview", "RC"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.table.cellDoubleClicked.connect(self.handle_row_double_click)
         layout.addWidget(self.table)
 
@@ -136,9 +148,10 @@ class ImportTab(QWidget):
             )
             QMessageBox.information(self, "Success",
                                     f"Successfully extracted and saved {len(items)} questions to Database!")
-            self.load_table_data()
-            if hasattr(self.main_window, "edit_tab"):
-                self.main_window.edit_tab.refresh_data_views()
+            if hasattr(self.main_window, "handle_database_mutation"):
+                self.main_window.handle_database_mutation()
+            else:
+                self.load_table_data()
         else:
             QMessageBox.warning(self, "Extraction Notice",
                                 "No structural layout items matches found in target page range bounds.")
@@ -147,9 +160,27 @@ class ImportTab(QWidget):
         self.btn_extract.setEnabled(True)
         QMessageBox.critical(self, "Parsing Error", f"An internal exception stopped the parsing routine:\n{err_msg}")
 
-    def load_table_data(self):
+    def load_table_data(self, *args):
+        self.current_batch_id = get_latest_extraction_id()
+        if self.current_batch_id is None:
+            self.current_questions = []
+            self.table.setUpdatesEnabled(False)
+            self.table.blockSignals(True)
+            try:
+                self.table.clearContents()
+                self.table.setRowCount(0)
+                self.btn_export.setEnabled(False)
+            finally:
+                self.table.blockSignals(False)
+                self.table.setUpdatesEnabled(True)
+            return
+
         sort_by_year = (self.combo_sort.currentIndex() == 1)
-        questions = get_all_questions(sort_by_year=sort_by_year)
+        questions = get_all_questions(
+            extraction_id=self.current_batch_id,
+            sort_by_year=sort_by_year,
+        )
+        self.current_questions = list(questions)
 
         self.table.setUpdatesEnabled(False)
         self.table.blockSignals(True)
@@ -164,45 +195,57 @@ class ImportTab(QWidget):
             for idx, q in enumerate(questions):
                 self.table.insertRow(idx)
 
-                status_item = QTableWidgetItem(q["status"] or "Unknown")
-                ref_item = QTableWidgetItem(f"MIR {q['ano']} - Q{q['num']}")
+                status_text = q["status"] or "Unknown"
+                status_item = QTableWidgetItem(status_text)
+                status_item.setData(Qt.ItemDataRole.UserRole, q["id"])
+                status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+                year_item = QTableWidgetItem(str(q["ano"] or ""))
+                year_item.setFlags(year_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+                num_item = QTableWidgetItem(str(q["num"] or ""))
+                num_item.setFlags(num_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
                 meta_item = QTableWidgetItem(
-                    f"T: {(q['tema'] or '')[:15]}...\nS: {(q['especialidad'] or '')[:15]}"
+                    f"{(q['especialidad'] or '')[:24]} | {(q['tema'] or '')[:24]}"
                 )
+                meta_item.setToolTip(
+                    f"Specialty: {q.get('especialidad') or ''}\nTema: {q.get('tema') or ''}"
+                )
+                meta_item.setFlags(meta_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
                 stem_preview = q["enunciado"] or ""
                 if len(stem_preview) > 50:
                     stem_preview = stem_preview[:50] + "..."
                 stem_item = QTableWidgetItem(stem_preview)
-                opts_item = QTableWidgetItem(f"{len(q['opciones'])} Options")
-                rc_item = QTableWidgetItem(f"RC: {q['rc']}")
+                stem_item.setFlags(stem_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-                # Save the database index primary key directly inside row item memory metadata
-                status_item.setData(Qt.ItemDataRole.UserRole, q["id"])
+                rc_item = QTableWidgetItem(str(q["rc"] or ""))
+                rc_item.setFlags(rc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
                 self.table.setItem(idx, 0, status_item)
-                self.table.setItem(idx, 1, ref_item)
-                self.table.setItem(idx, 2, meta_item)
-                self.table.setItem(idx, 3, stem_item)
-                self.table.setItem(idx, 4, opts_item)
+                self.table.setItem(idx, 1, year_item)
+                self.table.setItem(idx, 2, num_item)
+                self.table.setItem(idx, 3, meta_item)
+                self.table.setItem(idx, 4, stem_item)
                 self.table.setItem(idx, 5, rc_item)
         finally:
             self.table.blockSignals(False)
             self.table.setUpdatesEnabled(True)
 
     def handle_row_double_click(self, row, column):
-        status_item = self.table.item(row, 0)
-        if status_item is None:
+        if row < 0 or row >= len(self.current_questions):
             return
 
-        q_id = status_item.data(Qt.ItemDataRole.UserRole)
-        questions = get_all_questions()
-        target_q = next((q for q in questions if q["id"] == q_id), None)
-        if target_q:
-            self.question_selected_for_edit.emit(target_q)
+        target_q = dict(self.current_questions[row])
+        target_q["opciones"] = list(target_q.get("opciones", []))
+        self.question_selected_for_edit.emit(target_q)
 
     def export_document(self):
-        questions = get_all_questions()
-        if not questions:
+        if not self.current_questions:
+            self.load_table_data()
+
+        if not self.current_questions:
             return
 
         save_path, _ = QFileDialog.getSaveFileName(self, "Export File Location", "", "Text Files (*.txt)")
@@ -211,7 +254,7 @@ class ImportTab(QWidget):
 
         try:
             with open(save_path, "w", encoding="utf-8") as f:
-                f.write(render_quick_export_text(questions))
+                f.write(render_quick_export_text(self.current_questions))
             QMessageBox.information(self, "Success", f"Document generated at:\n{save_path}")
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed saving output file down: {str(e)}")

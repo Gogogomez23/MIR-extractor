@@ -241,6 +241,23 @@ def get_extractions():
     ]
 
 
+def get_latest_extraction_id():
+    conn = _connect()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id
+        FROM extractions
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def get_unique_specialties():
     conn = _connect()
     cursor = conn.cursor()
@@ -302,7 +319,7 @@ def _build_question_filters(filters):
     review_status = str(filters.get("review_status", "all")).strip().lower()
     if review_status == "revised":
         clauses.append("COALESCE(revised, 0) = 1")
-    elif review_status == "pending":
+    elif review_status in {"pending", "unrevised"}:
         clauses.append("COALESCE(revised, 0) = 0")
 
     return clauses, params
@@ -359,6 +376,31 @@ def get_filtered_questions(filters=None, sorting_mode="id"):
         query += " WHERE " + " AND ".join(clauses)
 
     query += f" {_build_order_clause(sorting_mode)}"
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return _rows_to_questions(rows)
+
+
+def get_explorer_questions(filters=None):
+    conn = _connect()
+    cursor = conn.cursor()
+
+    clauses, params = _build_question_filters(filters)
+    query = """
+        SELECT id, num, ano, enunciado, opciones_json, rc, tema, especialidad,
+               dificultad, explicacion, status, status_msg, extraction_id, revised
+        FROM questions
+    """
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    query += (
+        " ORDER BY COALESCE(extraction_id, 0) DESC, "
+        "CAST(ano AS INTEGER) DESC, CAST(num AS INTEGER) ASC, id ASC"
+    )
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
