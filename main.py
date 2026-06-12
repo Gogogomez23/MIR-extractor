@@ -1,3 +1,4 @@
+import os
 import sys
 from PyQt6.QtWidgets import QApplication
 from core.database import init_db
@@ -14,6 +15,8 @@ def main():
     window.show()
     sys.exit(app.exec())
 
+if sys.platform.startswith("linux"):
+    os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
 
 if __name__ == "__main__":
     main()

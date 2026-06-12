@@ -1,5 +1,5 @@
 # Production MIR Extractor Engine Suite
-**Version:** 1.7.1
+**Version:** 1.7.2
 
 An enterprise-grade Python application built using the PyQt6 desktop ecosystem framework. It delivers a fast, local, and reliable pipeline to convert raw PDF documents into structured clinical quiz formats.
 
