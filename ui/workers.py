@@ -16,61 +16,56 @@ class PDFParseWorker(QThread):
         self.end_page = end_page
         self.intake_filters = dict(intake_filters or {})
 
-    def _normalize_year_filter(self):
-        raw_year = self.intake_filters.get("year")
-        if raw_year is None:
-            return None
-
-        year_text = str(raw_year).strip()
-        if not year_text:
-            return None
-
+    def _matches_year_filter(self, question_year_str, filter_text):
+        if not filter_text:
+            return True
+        
         try:
-            return str(int(year_text))
-        except (TypeError, ValueError):
-            return None
-
-    def _compile_keyword_pattern(self):
-        pattern = str(self.intake_filters.get("keyword_pattern") or "").strip()
-        if not pattern:
-            return None
-
-        try:
-            return re.compile(pattern, re.IGNORECASE)
-        except re.error:
-            return re.compile(re.escape(pattern), re.IGNORECASE)
-
-    def _question_text_blob(self, question):
-        options = question.get("opciones") or []
-        parts = [
-            question.get("enunciado", ""),
-            " ".join(options),
-            question.get("explicacion", ""),
-            question.get("tema", ""),
-            question.get("especialidad", ""),
-        ]
-        return "\n".join(part for part in parts if part)
-
-    def _matches_intake_filters(self, question, year_filter, keyword_regex):
-        if year_filter is not None and str(question.get("ano", "")).strip() != year_filter:
+            q_year = int(str(question_year_str).strip())
+        except (ValueError, TypeError):
             return False
 
-        if keyword_regex is not None:
-            haystack = self._question_text_blob(question)
-            if not keyword_regex.search(haystack):
+        filter_text = filter_text.strip()
+        if "-" in filter_text:
+            parts = filter_text.split("-")
+            if len(parts) == 2:
+                try:
+                    start_year = int(parts[0].strip())
+                    end_year = int(parts[1].strip())
+                    return start_year <= q_year <= end_year
+                except ValueError:
+                    return False
+        else:
+            try:
+                target_year = int(filter_text)
+                return q_year == target_year
+            except ValueError:
+                return False
+        return False
+
+    def _matches_intake_filters(self, question, year_filter, ignore_images, page_has_images):
+        if not self._matches_year_filter(question.get("ano", ""), year_filter):
+            return False
+
+        if ignore_images:
+            if page_has_images:
+                return False
+            full_enunciado = question.get("enunciado", "").lower()
+            if "imagen" in full_enunciado or "figura" in full_enunciado:
                 return False
 
         return True
 
-    def _apply_intake_filters(self, questions):
-        year_filter = self._normalize_year_filter()
-        keyword_regex = self._compile_keyword_pattern()
-        if year_filter is None and keyword_regex is None:
-            return questions
+    def _apply_intake_filters(self, questions_with_metadata):
+        year_filter = self.intake_filters.get("year")
+        ignore_images = self.intake_filters.get("ignore_images", False)
+        
+        if not year_filter and not ignore_images:
+            return [q for q, _ in questions_with_metadata]
 
         filtered_questions = []
-        for question in questions:
-            if self._matches_intake_filters(question, year_filter, keyword_regex):
+        for question, page_has_images in questions_with_metadata:
+            if self._matches_intake_filters(question, year_filter, ignore_images, page_has_images):
                 filtered_questions.append(question)
         return filtered_questions
 
@@ -85,7 +80,7 @@ class PDFParseWorker(QThread):
                 actual_end = min(self.end_page, total_pages)
                 total_to_process = (actual_end - self.start_page) + 1
 
-                running_text_stream = ""
+                all_parsed_questions = []
                 steps_completed = 0
 
                 for p_idx in range(self.start_page - 1, actual_end):
@@ -114,14 +109,18 @@ class PDFParseWorker(QThread):
                     if topic_match:
                         current_tema = topic_match.group(0).strip()
 
-                    running_text_stream += "\n" + left_txt + "\n" + right_txt
+                    # Determine if page has visual elements
+                    page_has_images = (len(page.images) > 0 or len(page.rects) > 0)
+                    
+                    page_questions = parse_pdf_stream(combined_page_txt, current_specialty, current_tema)
+                    for q in page_questions:
+                        all_parsed_questions.append((q, page_has_images))
 
                     steps_completed += 1
                     percentage = int((steps_completed / total_to_process) * 100)
                     self.progress_updated.emit(percentage)
 
-                questions = parse_pdf_stream(running_text_stream, current_specialty, current_tema)
-                questions = self._apply_intake_filters(questions)
+                questions = self._apply_intake_filters(all_parsed_questions)
                 self.parsing_complete.emit(questions)
 
         except Exception as e:

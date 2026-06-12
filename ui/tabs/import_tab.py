@@ -1,11 +1,12 @@
 import os
 
+from PyQt6.QtGui import QIntValidator
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QFormLayout, QGroupBox, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFileDialog, QMessageBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QComboBox)
 from core.export_format import render_quick_export_text
-from ui.workers import PDFParseWorker, parse_year_filter_bounds
+from ui.workers import PDFParseWorker
 from core.database import save_questions, get_all_questions, get_latest_extraction_id
 import pdfplumber
 
@@ -19,7 +20,7 @@ class ImportTab(QWidget):
         self.current_batch_id = None
         self.current_questions = []
         self.current_intake_settings = {
-            "year_filter_text": "",
+            "year": None,
             "ignore_images": False,
             "duplicate_policy": "allow_tag",
         }
@@ -93,11 +94,11 @@ class ImportTab(QWidget):
 
         self.entry_year_filter = QLineEdit()
         self.entry_year_filter.setPlaceholderText("e.g., 2022 or 2018-2022")
-        self.entry_year_filter.setMaximumWidth(170)
+        self.entry_year_filter.setMaximumWidth(150)
         filter_form.addRow("Year Filter:", self.entry_year_filter)
 
         self.chk_ignore_images = QCheckBox("Ignore questions with images")
-        filter_form.addRow("", self.chk_ignore_images)
+        filter_form.addRow(self.chk_ignore_images)
 
         self.combo_duplicate_policy = QComboBox()
         self.combo_duplicate_policy.addItem("Allow & Tag as Duplicate", "allow_tag")
@@ -176,17 +177,13 @@ class ImportTab(QWidget):
         self.entry_end.setText(str(total_doc_pages))
 
     def _collect_intake_settings(self):
-        year_text = self.entry_year_filter.text().strip()
-        try:
-            parse_year_filter_bounds(year_text)
-        except ValueError as exc:
-            return None, str(exc)
-
+        year_text = self.entry_year_filter.text().strip() or None
+        ignore_images = self.chk_ignore_images.isChecked()
         duplicate_policy = self.combo_duplicate_policy.currentData() or "allow_tag"
 
         return {
-            "year_filter_text": year_text,
-            "ignore_images": self.chk_ignore_images.isChecked(),
+            "year": year_text,
+            "ignore_images": ignore_images,
             "duplicate_policy": duplicate_policy,
         }, None
 
