@@ -1,0 +1,109 @@
+name: Compile App and Create Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Executable on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: MIRExtractor-Windows.exe
+            asset_name: MIRExtractor-Windows.exe
+          - os: ubuntu-latest
+            artifact_name: MIRExtractor-Linux
+            asset_name: MIRExtractor-Linux
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Linux System Dependencies (For PyQt)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1-mesa libgl1-mesa-glx libxcb-xinerama0 libxcb-cursor0
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          pyinstaller --onefile --windowed --name=MIRExtractor-Windows main.py
+
+      - name: Build with PyInstaller (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          pyinstaller --onefile --windowed --name=MIRExtractor-Linux main.py
+
+      - name: Upload Build Artifacts temporarily
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.artifact_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MIRExtractor-Windows.exe
+          path: ./artifacts
+
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MIRExtractor-Linux
+          path: ./artifacts
+
+      - name: Extract Version from README
+        id: get_version
+        run: |
+          # Looks for a line containing "Version:" ignoring markdown symbols, grabs the digits/dots
+          VERSION=$(grep -i "version:" README.md | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          
+          # Fallback check: If version wasn't found in README, use sequential run tracking so it never fails
+          if [ -z "$VERSION" ]; then
+            VERSION="1.0.auto-${{ github.run_number }}"
+          fi
+          
+          echo "APP_VERSION=v$VERSION" >> $GITHUB_ENV
+          echo "Extracted Version: v$VERSION"
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.APP_VERSION }}
+          name: Release ${{ env.APP_VERSION }}
+          body: |
+            Automated build compiled directly from the latest updates to the `main` branch.
+            
+            **Latest Commit Message:** ${{ github.event.head_commit.message }}
+          draft: false
+          prerelease: false
+          files: |
+            ./artifacts/MIRExtractor-Windows.exe
+            ./artifacts/MIRExtractor-Linux

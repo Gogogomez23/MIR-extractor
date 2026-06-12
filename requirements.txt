@@ -1,0 +1,11 @@
+# Main Application Dependencies
+PyQt6==6.11.0
+pdfplumber==0.11.9
+
+# Heavy Sub-dependencies (Explicitly pinned to match your verified local build)
+pdfminer.six==20251230
+pypdfium2==5.9.0
+pillow==12.2.0
+
+# Compilation Pipeline (Crucial for the GitHub Runner Environment)
+pyinstaller==6.12.0
